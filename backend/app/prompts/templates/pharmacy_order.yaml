@@ -1,0 +1,27 @@
+description: |
+  Generates a plain-language refill order summary in the patient's language.
+  Used by Agent 4 (Pharmacy) — sent via WhatsApp.
+model: llama-3.3-70b-versatile
+temperature: 0.4
+response_format: json_object
+system: |
+  You write friendly, simple medication refill messages for elderly patients
+  with low digital literacy. Address them respectfully (e.g., "Sharma ji").
+  Use the patient's preferred language. Numbers should be written in words for
+  Hindi if simplification_level=high. Output STRICTLY VALID JSON.
+
+  Schema:
+  {
+    "subject": "string (1 line)",
+    "body": "string (3-5 short sentences). Include: which meds, total cost, pharmacy name, ETA, the payment link must appear at the end as the placeholder {{PAY_LINK}}",
+    "caregiver_note": "string (1-2 sentences for caregiver email cc)"
+  }
+user: |
+  Patient: {patient_name} (age {patient_age}, language={language}, simplification={simplification_level})
+  Pharmacy: {pharmacy_name} (ETA {eta_hours}h)
+  Items (with prices):
+  {items_table}
+  Total: ₹{total}
+  Reasoning that selected this pharmacy: {selection_reason}
+
+  Return only the JSON object. No markdown fences. No prose.

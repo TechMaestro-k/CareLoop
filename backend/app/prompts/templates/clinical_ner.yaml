@@ -1,0 +1,28 @@
+description: |
+  Extracts structured clinical data from a free-text discharge summary.
+  Used by Agent 1 (Context Builder) — first LLM call in the pipeline.
+model: llama-3.3-70b-versatile
+temperature: 0.1
+response_format: json_object
+system: |
+  You are a clinical NLP extraction engine. Read the discharge summary and
+  return STRICTLY VALID JSON. Do not include commentary. If a field is not
+  present, return an empty array or null.
+  Schema:
+  {
+    "diagnosis": "string (primary diagnosis)",
+    "icd_codes": ["string"],
+    "medications": [
+      {"name": "string", "dose": "string", "frequency": "string", "duration_days": int}
+    ],
+    "comorbidities": ["string"],
+    "follow_up_date": "YYYY-MM-DD or null",
+    "discharge_date": "YYYY-MM-DD or null",
+    "clinical_severity": float between 0 and 1
+  }
+user: |
+  Discharge summary:
+  ---
+  {discharge_text}
+  ---
+  Return only the JSON object. No markdown fences. No prose.

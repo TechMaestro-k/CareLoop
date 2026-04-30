@@ -1,0 +1,171 @@
+"""Patient onboarding + listing + detail endpoints."""
+from __future__ import annotations
+
+import logging
+from typing import Any, Optional
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+
+from app.agents.graph import run_onboarding
+from app.agents.state import empty_state
+from app.config import settings
+from app.db.client import safe_insert, safe_select
+from app.seed.synthetic_patients import seed_inventory_low
+
+router = APIRouter(prefix="/patients", tags=["patients"])
+log = logging.getLogger(__name__)
+
+
+class OnboardRequest(BaseModel):
+    name: str
+    age: int
+    phone: str
+    email: Optional[str] = None
+    language: str = "en"
+    channel_pref: str = "whatsapp_text"
+    caregiver_phone: Optional[str] = None
+    caregiver_email: Optional[str] = None
+    discharge_text: str
+    sdoh_responses: dict[str, Any] = Field(default_factory=dict)
+    seed_low_inventory: bool = False
+
+
+def _find_duplicate(name: str, phone: str) -> dict[str, Any] | None:
+    """Return an existing patient row that conflicts with (name, phone).
+
+    Match priority:
+      1. Same phone (strongest — phone is a real-world unique key for this domain).
+      2. Same case-insensitive name AND same phone (defensive against stray duplicates).
+    """
+    norm_phone = (phone or "").strip()
+    norm_name = (name or "").strip()
+    if norm_phone:
+        rows = safe_select("patients", match={"phone": norm_phone}, limit=1)
+        if rows:
+            return rows[0]
+    # Fallback: case-insensitive name match (only used when phone empty)
+    if norm_name:
+        # safe_select doesn't expose ilike; do a small client-side filter.
+        all_rows = safe_select("patients", limit=200)
+        for r in all_rows:
+            if (r.get("name") or "").strip().lower() == norm_name.lower():
+                return r
+    return None
+
+
+@router.post("/onboard")
+def onboard(req: OnboardRequest):
+    if not settings.has_supabase:
+        raise HTTPException(status_code=503, detail="Database not configured")
+    existing = _find_duplicate(req.name, req.phone)
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "duplicate_patient",
+                "message": (
+                    f"A patient named '{existing.get('name')}' with phone "
+                    f"{existing.get('phone')} already exists. Open the existing record "
+                    f"instead of re-onboarding."
+                ),
+                "existing_patient_id": existing.get("id"),
+                "existing_name": existing.get("name"),
+                "existing_phone": existing.get("phone"),
+            },
+        )
+    row = safe_insert(
+        "patients",
+        {
+            "name": req.name,
+            "age": req.age,
+            "phone": req.phone,
+            "email": req.email,
+            "language": req.language,
+            "channel_pref": req.channel_pref,
+            "caregiver_phone": req.caregiver_phone,
+            "caregiver_email": req.caregiver_email or settings.caregiver_email_default,
+        },
+    )
+    if not row:
+        raise HTTPException(status_code=500, detail="Failed to create patient row")
+    pid = row["id"]
+    if req.seed_low_inventory:
+        seed_inventory_low(pid)
+
+    state = empty_state()
+    state["patient_id"] = pid
+    state["raw_discharge_text"] = req.discharge_text
+    state["sdoh_responses"] = req.sdoh_responses
+    state["language"] = req.language
+    state["channel"] = req.channel_pref
+    state["patient_record"] = {**row}
+    state["triggered_by"] = "onboarding"
+
+    final_state = run_onboarding(state)
+
+    return {
+        "patient_id": pid,
+        "risk_score": final_state.get("risk_score"),
+        "care_plan": final_state.get("care_plan"),
+        "knowledge_graph": final_state.get("knowledge_graph_json"),
+        "reasoning_steps": final_state.get("reasoning_steps", []),
+    }
+
+
+@router.get("")
+def list_patients():
+    rows = safe_select("patients", order=("created_at", True), limit=100)
+    out = []
+    for r in rows:
+        sdoh_rows = safe_select("sdoh_profiles", match={"patient_id": r["id"]}, limit=1)
+        clin_rows = safe_select("clinical_data", match={"patient_id": r["id"]}, limit=1)
+        out.append(
+            {
+                **r,
+                "diagnosis": clin_rows[0].get("diagnosis") if clin_rows else None,
+                "sdoh": sdoh_rows[0] if sdoh_rows else None,
+            }
+        )
+    return {"patients": out}
+
+
+@router.get("/{patient_id}")
+def get_patient(patient_id: str):
+    rows = safe_select("patients", match={"id": patient_id}, limit=1)
+    if not rows:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    patient = rows[0]
+    clin = safe_select("clinical_data", match={"patient_id": patient_id}, limit=1)
+    sdoh = safe_select("sdoh_profiles", match={"patient_id": patient_id}, limit=1)
+    kg = safe_select("knowledge_graphs", match={"patient_id": patient_id}, limit=1)
+    plans = safe_select(
+        "care_plans", match={"patient_id": patient_id}, order=("created_at", True), limit=5
+    )
+    interactions = safe_select(
+        "interactions", match={"patient_id": patient_id}, order=("timestamp", True), limit=20
+    )
+    inventory = safe_select("medications_inventory", match={"patient_id": patient_id})
+    orders = safe_select(
+        "pharmacy_orders", match={"patient_id": patient_id}, order=("created_at", True), limit=10
+    )
+    escalations = safe_select(
+        "escalations", match={"patient_id": patient_id}, order=("created_at", True), limit=10
+    )
+    return {
+        "patient": patient,
+        "clinical": clin[0] if clin else None,
+        "sdoh": sdoh[0] if sdoh else None,
+        "knowledge_graph": kg[0].get("graph_json") if kg else None,
+        "care_plans": plans,
+        "interactions": interactions,
+        "medications_inventory": inventory,
+        "pharmacy_orders": orders,
+        "escalations": escalations,
+    }
+
+
+@router.post("/{patient_id}/seed-low-inventory")
+def trigger_low_inventory(patient_id: str):
+    seed_inventory_low(patient_id)
+    return {"ok": True}
