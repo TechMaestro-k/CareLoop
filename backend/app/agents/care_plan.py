@@ -1,0 +1,179 @@
+"""Agent 2: Care Plan generator + initial outreach."""
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from app.agents.state import PatientState
+from app.db.client import safe_insert, safe_select
+from app.tools import kg as kg_tools
+from app.tools.email_tool import send_email
+from app.tools.llm import chat_json
+from app.tools.voice import public_audio_url, synthesize_sync
+from app.tools.whatsapp import send_whatsapp
+
+log = logging.getLogger(__name__)
+
+
+def _persist_reasoning(patient_id: str, observed: dict, inferred: dict, decided: str, tools: list[str]):
+    safe_insert(
+        "reasoning_traces",
+        {
+            "patient_id": patient_id,
+            "agent_name": "care_plan",
+            "observed": observed,
+            "inferred": inferred,
+            "decided": decided,
+            "tools_called": tools,
+        },
+    )
+
+
+def _patient_record(patient_id: str) -> dict[str, Any]:
+    rows = safe_select("patients", match={"id": patient_id}, limit=1)
+    return rows[0] if rows else {}
+
+
+def care_plan_node(state: PatientState) -> PatientState:
+    patient_id = state["patient_id"]
+    clinical = state.get("clinical_extracted", {}) or {}
+    sdoh_profile = state.get("sdoh_profile", {}) or {}
+    g = state.get("knowledge_graph")
+    kg_high = kg_tools.kg_highlights(g) if g is not None else {}
+    patient = state.get("patient_record") or _patient_record(patient_id)
+
+    tools_called: list[str] = []
+
+    # Step 1: generate plan via Groq with chain-of-thought prompt
+    plan = (
+        chat_json(
+            "care_plan_generator",
+            diagnosis=clinical.get("diagnosis", ""),
+            medications=clinical.get("medications", []),
+            comorbidities=clinical.get("comorbidities", []),
+            sdoh_profile=sdoh_profile,
+            risk_score=state.get("risk_score", 0.0),
+            kg_highlights=kg_high,
+        )
+        or {}
+    )
+    tools_called.append("llm:care_plan_generator")
+
+    # Defensive defaults
+    plan.setdefault("channel", state.get("channel", "whatsapp_text"))
+    # Language posture: prefer the SDOH-derived language carried on state; only
+    # fall back to English if nothing upstream produced a code. This is what lets
+    # the gTTS voice path actually speak Hindi / Tamil / Bengali / etc.
+    plan.setdefault("language", state.get("language") or sdoh_profile.get("language") or "en")
+    plan.setdefault("simplification_level", "high" if sdoh_profile.get("literacy_level") == "low" else "medium")
+    plan.setdefault("check_in_cadence", "daily")
+    plan.setdefault("check_in_time", "09:00")
+    plan.setdefault("caregiver_loop_enabled", sdoh_profile.get("caregiver_risk") in ("medium", "high"))
+    plan.setdefault("red_flag_symptoms", kg_high.get("red_flags", []))
+
+    # Persist plan
+    inserted = safe_insert(
+        "care_plans",
+        {
+            "patient_id": patient_id,
+            "plan_json": plan,
+            "reasoning_trace": plan.get("reasoning", ""),
+        },
+    )
+    tools_called.append("db:insert(care_plans)")
+
+    # Step 2: WhatsApp welcome to patient
+    name = patient.get("name") or "Patient"
+    welcome = _build_welcome(name, plan)
+    media_url = None
+    if plan.get("channel") == "whatsapp_voice":
+        audio_path = synthesize_sync(welcome, language=plan.get("language", "en"))
+        if audio_path:
+            tools_called.append("voice:gtts")
+            media_url = public_audio_url(audio_path) or None
+
+    if patient.get("phone"):
+        result = send_whatsapp(patient["phone"], welcome, media_url=media_url)
+        tools_called.append(f"whatsapp:welcome({'mock' if result.get('mock') else 'live'})")
+        safe_insert(
+            "interactions",
+            {
+                "patient_id": patient_id,
+                "channel": "whatsapp",
+                "direction": "outbound",
+                "content": welcome,
+                "classification": "welcome",
+                "agent_decision": "send_welcome",
+            },
+        )
+
+    # Step 3: Email caregiver summary
+    caregiver_email = patient.get("caregiver_email")
+    if caregiver_email and plan.get("caregiver_loop_enabled"):
+        subj = f"CareLoop care plan for {name}"
+        body = _build_caregiver_email(name, plan, clinical, sdoh_profile)
+        send_email(caregiver_email, subj, body)
+        tools_called.append("email:caregiver_summary")
+
+    # Step 4: schedule daily check-in
+    try:
+        from app.scheduler.jobs import schedule_daily_checkin
+
+        schedule_daily_checkin(patient_id, plan.get("check_in_time", "09:00"))
+        tools_called.append("scheduler:daily_checkin")
+    except Exception as e:
+        log.warning("Scheduler unavailable: %s", e)
+
+    decided = (
+        f"Care plan: channel={plan.get('channel')}, cadence={plan.get('check_in_cadence')} @ "
+        f"{plan.get('check_in_time')} IST, simplification={plan.get('simplification_level')}, "
+        f"caregiver_loop={plan.get('caregiver_loop_enabled')}."
+    )
+    _persist_reasoning(
+        patient_id,
+        observed={"sdoh_profile": sdoh_profile, "clinical_summary": {"diagnosis": clinical.get("diagnosis")}},
+        inferred={"plan": plan},
+        decided=decided,
+        tools=tools_called,
+    )
+
+    state["care_plan"] = plan
+    state["channel"] = plan.get("channel")
+    state["language"] = plan.get("language")
+    state.setdefault("tools_called", []).extend(tools_called)
+    state.setdefault("reasoning_steps", []).append(
+        {
+            "agent": "care_plan",
+            "observed": {"risk_score": state.get("risk_score")},
+            "inferred": {"plan_keys": list(plan.keys())},
+            "decided": decided,
+            "tools_called": tools_called,
+        }
+    )
+    return state
+
+
+def _build_welcome(name: str, plan: dict) -> str:
+    cadence = plan.get("check_in_cadence", "daily")
+    time_ = plan.get("check_in_time", "09:00")
+    return (
+        f"🩺 CareLoop\n"
+        f"Hi {name}, this is CareLoop — your post-discharge care companion.\n"
+        f"I'll check in with you {cadence.replace('_', ' ')} at {time_} for the next 30 days.\n"
+        f"Reply any time if something feels off — I'll loop in your doctor right away."
+    )
+
+
+def _build_caregiver_email(name: str, plan: dict, clinical: dict, sdoh: dict) -> str:
+    sched = plan.get("medication_schedule", [])
+    sched_lines = "\n".join(
+        f"  • {m.get('med')} at {m.get('time')} — {m.get('instruction')}" for m in sched
+    ) or "  (none)"
+    flags = ", ".join(plan.get("red_flag_symptoms", [])) or "(none listed)"
+    return (
+        f"Hi,\n\nCareLoop is now monitoring {name} after discharge.\n\n"
+        f"Daily check-in: {plan.get('check_in_cadence')} @ {plan.get('check_in_time')} via {plan.get('channel')}\n\n"
+        f"Medication schedule:\n{sched_lines}\n\n"
+        f"Watch for these red-flag symptoms — message us immediately if you see them:\n  {flags}\n\n"
+        f"You'll receive an email if anything escalates.\n\n— CareLoop"
+    )
