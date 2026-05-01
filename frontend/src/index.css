@@ -1,0 +1,73 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* App surfaces */
+    --background: 210 30% 96%;          /* #EAF0F5 page bg */
+    --surface: 0 0% 100%;                /* white */
+    --foreground: 220 18% 12%;           /* near-black */
+    --card: 0 0% 100%;
+    --card-foreground: 220 18% 12%;
+    --muted: 210 30% 96%;
+    --muted-foreground: 218 9% 45%;
+    --accent: 152 60% 95%;
+    --accent-foreground: 158 60% 18%;
+    --border: 220 13% 88%;
+    --input: 220 13% 88%;
+    /* CareLoop primary = mint deep */
+    --primary: 156 51% 58%;              /* #5FCBA0 */
+    --primary-foreground: 220 18% 12%;
+    --ring: 156 51% 58%;
+    --destructive: 354 73% 56%;          /* #E04050 */
+    --destructive-foreground: 0 0% 100%;
+    --radius: 0.75rem;
+  }
+
+  html, body, #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv11", "ss01", "ss03";
+    font-family: "Inter", system-ui, sans-serif;
+  }
+  h1, h2, h3, h4, .font-display {
+    font-family: "Manrope", "Inter", system-ui, sans-serif;
+    letter-spacing: -0.01em;
+  }
+
+  /* Devanagari fall-through for messages mixing scripts */
+  :lang(hi), :lang(mr) {
+    font-family: "Noto Sans Devanagari", "Inter", sans-serif;
+  }
+
+  /* Subtle scrollbars */
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-thumb { background: rgba(105, 115, 131, 0.25); border-radius: 999px; }
+  *::-webkit-scrollbar-thumb:hover { background: rgba(105, 115, 131, 0.45); }
+}
+
+@layer components {
+  .card-base {
+    @apply rounded-xl border border-border bg-card shadow-card;
+  }
+  .severity-red   { @apply bg-triage-redSoft   text-triage-red;   }
+  .severity-amber { @apply bg-triage-amberSoft text-triage-amber; }
+  .severity-green { @apply bg-triage-greenSoft text-triage-green; }
+
+  .triage-bar-red   { @apply border-l-4 border-triage-red; }
+  .triage-bar-amber { @apply border-l-4 border-triage-amber; }
+  .triage-bar-green { @apply border-l-4 border-triage-green; }
+
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2.5 py-0.5 text-xs font-medium text-ink-60;
+  }
+}
+
+@layer utilities {
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+  }
+}
