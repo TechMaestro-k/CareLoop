@@ -60,9 +60,7 @@ export function ChatPanel({
     try {
       const data: any = await api.getPatient(patientId);
       setInteractions(data.interactions || []);
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   }
 
   useEffect(() => {
@@ -70,7 +68,6 @@ export function ChatPanel({
     setBubbles([]);
     setEmails([]);
     setSlotCache({});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patientId]);
 
   function pushHandoff(w: any, ts: string) {

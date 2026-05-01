@@ -1,4 +1,3 @@
-"""APScheduler in-process scheduler for daily patient check-ins."""
 from __future__ import annotations
 
 import logging
@@ -41,29 +40,15 @@ def shutdown_scheduler():
         sched.shutdown(wait=False)
 
 
-# ─────────────────────────────────────────────
-# Check-in scheduling
-# ─────────────────────────────────────────────
 
 def _distribute_checkin_times(base_time_hhmm: str, times_per_day: int) -> list[str]:
-    """Spread `times_per_day` check-ins evenly across the full waking window.
-
-    The waking window spans from base_time to base_time + 12 hours.
-    First and last slots are always included so the full window is used.
-
-    Examples (base=08:00, 12-hour window → end=20:00):
-      times_per_day=1 → ['08:00']
-      times_per_day=2 → ['08:00', '20:00']
-      times_per_day=3 → ['08:00', '14:00', '20:00']
-      times_per_day=6 → ['08:00', '10:24', '12:48', '15:12', '17:36', '20:00']
-    """
     times_per_day = max(1, min(6, times_per_day))
     try:
         hh, mm = map(int, base_time_hhmm.split(":"))
     except Exception:
         hh, mm = 9, 0
     start_minutes = hh * 60 + mm
-    window_minutes = 12 * 60  # 08:00 → 20:00
+    window_minutes = 12 * 60
 
     if times_per_day == 1:
         return [base_time_hhmm]
@@ -77,11 +62,6 @@ def _distribute_checkin_times(base_time_hhmm: str, times_per_day: int) -> list[s
 
 
 def schedule_daily_checkin(patient_id: str, time_hhmm: str = "09:00", times_per_day: int = 3):
-    """Register/replace check-in jobs for the patient.
-
-    Creates `times_per_day` evenly-distributed jobs (clamped 1–6, default 3).
-    Removes any previously registered check-in jobs for this patient first.
-    """
     cancel_patient_jobs(patient_id)
     times = _distribute_checkin_times(time_hhmm, times_per_day)
     sched = get_scheduler()
@@ -124,7 +104,6 @@ def cancel_patient_jobs(patient_id: str):
 
 
 def _run_checkin(patient_id: str):
-    """Job wrapper that triggers the engagement flow in cron mode."""
     from app.agents.graph import run_engagement
     from app.agents.state import empty_state
 
@@ -138,18 +117,8 @@ def _run_checkin(patient_id: str):
         log.error("Check-in run failed for %s: %s", patient_id, e)
 
 
-# ─────────────────────────────────────────────
-# Startup: reschedule active patients
-# ─────────────────────────────────────────────
 
 def reschedule_active_patients() -> int:
-    """On startup, reload active care plans from DB and reschedule check-ins.
-
-    APScheduler is in-memory — jobs are lost on restart. This function
-    recovers them using the latest care plan per patient.
-    Skips patients whose 30-day post-discharge program has ended.
-    Returns the count of patients rescheduled.
-    """
     from datetime import date, timedelta
 
     rescheduled = 0
@@ -167,7 +136,6 @@ def reschedule_active_patients() -> int:
         if not pid:
             continue
         try:
-            # Skip patients past their 30-day discharge window
             clinical_rows = safe_select(
                 "clinical_data",
                 match={"patient_id": pid},

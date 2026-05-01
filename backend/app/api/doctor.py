@@ -1,4 +1,3 @@
-"""Doctor-facing endpoints: escalation queue + brief detail + action."""
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
@@ -49,7 +48,7 @@ def get_escalation(esc_id: str):
 
 
 class ActionRequest(BaseModel):
-    action: str  # accept | reject | reschedule
+    action: str
     note: str | None = None
 
 

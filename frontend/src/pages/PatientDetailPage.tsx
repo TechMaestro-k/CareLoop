@@ -37,7 +37,6 @@ export default function PatientDetailPage() {
 
   useEffect(() => {
     void reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   if (loading && !data) return <div className="text-sm text-ink-40">Loading patient…</div>;

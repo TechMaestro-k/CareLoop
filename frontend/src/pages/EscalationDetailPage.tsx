@@ -30,7 +30,6 @@ export default function EscalationDetailPage() {
   }
   useEffect(() => {
     void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   async function act(action: string) {

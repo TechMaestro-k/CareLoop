@@ -4,10 +4,10 @@
 
 @layer base {
   :root {
-    /* App surfaces */
-    --background: 210 30% 96%;          /* #EAF0F5 page bg */
-    --surface: 0 0% 100%;                /* white */
-    --foreground: 220 18% 12%;           /* near-black */
+
+    --background: 210 30% 96%;
+    --surface: 0 0% 100%;
+    --foreground: 220 18% 12%;
     --card: 0 0% 100%;
     --card-foreground: 220 18% 12%;
     --muted: 210 30% 96%;
@@ -16,11 +16,11 @@
     --accent-foreground: 158 60% 18%;
     --border: 220 13% 88%;
     --input: 220 13% 88%;
-    /* CareLoop primary = mint deep */
-    --primary: 156 51% 58%;              /* #5FCBA0 */
+
+    --primary: 156 51% 58%;
     --primary-foreground: 220 18% 12%;
     --ring: 156 51% 58%;
-    --destructive: 354 73% 56%;          /* #E04050 */
+    --destructive: 354 73% 56%;
     --destructive-foreground: 0 0% 100%;
     --radius: 0.75rem;
   }
@@ -38,12 +38,12 @@
     letter-spacing: -0.01em;
   }
 
-  /* Devanagari fall-through for messages mixing scripts */
+
   :lang(hi), :lang(mr) {
     font-family: "Noto Sans Devanagari", "Inter", sans-serif;
   }
 
-  /* Subtle scrollbars */
+
   *::-webkit-scrollbar { width: 10px; height: 10px; }
   *::-webkit-scrollbar-thumb { background: rgba(105, 115, 131, 0.25); border-radius: 999px; }
   *::-webkit-scrollbar-thumb:hover { background: rgba(105, 115, 131, 0.45); }

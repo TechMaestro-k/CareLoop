@@ -26,7 +26,7 @@ export function Sidebar() {
       className="hidden md:flex md:w-60 md:shrink-0 md:flex-col"
       style={{ background: "#0E1116" }}
     >
-      {/* Logo */}
+
       <div className="flex items-center gap-2.5 px-5 py-5">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#5FCBA0]">
           <span className="text-sm font-bold text-[#0E1116]">C</span>
@@ -39,7 +39,7 @@ export function Sidebar() {
         </span>
       </div>
 
-      {/* Nav */}
+
       <nav className="flex-1 px-3 pb-4">
         <p className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-widest" style={{ color: "#697383" }}>
           Navigation

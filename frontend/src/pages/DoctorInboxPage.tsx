@@ -138,7 +138,6 @@ export default function DoctorInboxPage() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingPicks.map((p) => p.id).join(",")]);
 
   function summaryFor(p: Proposal): HandoffSummary | "loading" | "error" | null {

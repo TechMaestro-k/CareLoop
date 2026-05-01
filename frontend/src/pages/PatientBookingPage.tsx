@@ -47,7 +47,6 @@ export default function PatientBookingPage() {
   }
   useEffect(() => {
     void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   async function pick(slotIso: string) {

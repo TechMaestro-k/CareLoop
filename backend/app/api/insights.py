@@ -1,8 +1,3 @@
-"""Insights endpoint — small read-only aggregates for the dashboard.
-
-Everything is computed in-process from `safe_select` so it stays honest
-when Supabase is unreachable (returns zeros instead of crashing).
-"""
 from __future__ import annotations
 
 from collections import Counter

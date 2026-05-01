@@ -26,9 +26,7 @@ async function http<T = any>(path: string, init?: RequestInit): Promise<T> {
     let body: any = text;
     try {
       body = JSON.parse(text);
-    } catch {
-      /* leave as text */
-    }
+    } catch {}
     throw new ApiError(res.status, res.statusText, body);
   }
   if (res.status === 204) return null as unknown as T;
@@ -38,7 +36,6 @@ async function http<T = any>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   health: () => http("/api/healthz"),
 
-  // patients
   listPatients: () => http<{ patients: any[] }>("/api/patients"),
   getPatient: (id: string) => http(`/api/patients/${id}`),
   onboard: (payload: any) =>
@@ -46,14 +43,12 @@ export const api = {
   seedLowInventory: (id: string) =>
     http(`/api/patients/${id}/seed-low-inventory`, { method: "POST" }),
 
-  // messages
   simulate: (patient_id: string, message: string) =>
     http("/api/messages/simulate", {
       method: "POST",
       body: JSON.stringify({ patient_id, message }),
     }),
 
-  // doctor
   listEscalations: (status?: string) =>
     http<{ escalations: any[] }>(
       `/api/doctor/escalations${status ? `?status=${status}` : ""}`,
@@ -65,7 +60,6 @@ export const api = {
       body: JSON.stringify({ action, note }),
     }),
 
-  // prompts
   listPrompts: () => http<{ prompts: any[] }>("/api/prompts"),
   getPrompt: (key: string) => http(`/api/prompts/${key}`),
   updatePrompt: (key: string, template: string) =>
@@ -92,19 +86,15 @@ export const api = {
       { method: "POST" },
     ),
 
-  // reasoning
   recentReasoning: (limit = 50) => http<{ traces: any[] }>(`/api/reasoning/recent?limit=${limit}`),
   patientReasoning: (id: string, limit = 25) =>
     http<{ traces: any[] }>(`/api/reasoning/patient/${id}?limit=${limit}`),
 
-  // booking consult fee — gates doctor confirmation
   simulateBookingPayment: (proposalId: string) =>
     http(`/api/booking/${proposalId}/simulate-payment`, { method: "POST" }),
 
-  // admin
   seedDemo: () => http("/api/admin/seed", { method: "POST" }),
 
-  // booking — patient picker + doctor accept/reject
   getProposal: (id: string) =>
     http<{ proposal: any; patient: any; doctor_handoff_summary?: any }>(
       `/api/booking/${id}`,
