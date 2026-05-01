@@ -17,7 +17,7 @@ class PatientState(TypedDict, total=False):
     sdoh_responses: dict[str, Any]
     clinical_extracted: dict[str, Any]
     sdoh_profile: dict[str, Any]
-    knowledge_graph: Any  # NetworkX DiGraph (in-memory)
+    knowledge_graph: Any
     knowledge_graph_json: dict[str, Any]
     care_plan: dict[str, Any]
     current_message: str
@@ -28,14 +28,9 @@ class PatientState(TypedDict, total=False):
     risk_score: float
     language: str
     channel: str
-    # Patient context loaded from DB
     patient_record: dict[str, Any]
-    # Check-in frequency set at onboarding
-    check_in_times_per_day: int  # default 3
-    # Inbound trigger metadata (engagement)
-    triggered_by: str  # "cron" | "inbound" | "onboarding"
-    # Outgoing transcript collectors (populated by engagement_node so the
-    # /messages/simulate endpoint can return what was actually sent).
+    check_in_times_per_day: int
+    triggered_by: str
     outgoing_messages: list[dict[str, Any]]
     outgoing_emails: list[dict[str, Any]]
 

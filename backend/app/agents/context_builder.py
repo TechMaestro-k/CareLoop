@@ -42,26 +42,21 @@ def context_builder_node(state: PatientState) -> PatientState:
 
     tools_called: list[str] = []
 
-    # Step 1: extract clinical entities
     clinical = chat_json("clinical_ner", discharge_text=raw_text) or {}
     tools_called.append("llm:clinical_ner")
     log.info("Clinical extracted: %s", {k: clinical.get(k) for k in ("diagnosis", "icd_codes")})
 
-    # Step 2: classify SDOH
     sdoh_profile = chat_json("sdoh_classifier", sdoh_responses=sdoh_responses) or {}
     tools_called.append("llm:sdoh_classifier")
 
-    # Step 3: build KG
     g = kg_tools.build_patient_graph(clinical, sdoh_profile)
     g_json = kg_tools.graph_to_json(g)
     tools_called.append("kg:build")
 
-    # Step 4: fused risk score
     clinical_severity = float(clinical.get("clinical_severity") or 0.6)
     sdoh_aggregate = float(sdoh_profile.get("sdoh_aggregate") or _aggregate_sdoh_score(sdoh_profile))
     risk_score = round(clinical_severity * 0.4 + sdoh_aggregate * 0.6, 3)
 
-    # Step 5: persist
     safe_upsert(
         "clinical_data",
         {
