@@ -43,7 +43,6 @@ def care_plan_node(state: PatientState) -> PatientState:
 
     tools_called: list[str] = []
 
-    # Step 1: generate plan via Groq with chain-of-thought prompt
     plan = (
         chat_json(
             "care_plan_generator",
@@ -58,12 +57,8 @@ def care_plan_node(state: PatientState) -> PatientState:
     )
     tools_called.append("llm:care_plan_generator")
 
-    # Defensive defaults
     plan.setdefault("channel", state.get("channel", "whatsapp_text"))
     plan.setdefault("check_in_times_per_day", int(state.get("check_in_times_per_day") or 3))
-    # Language posture: prefer the SDOH-derived language carried on state; only
-    # fall back to English if nothing upstream produced a code. This is what lets
-    # the gTTS voice path actually speak Hindi / Tamil / Bengali / etc.
     plan.setdefault("language", state.get("language") or sdoh_profile.get("language") or "en")
     plan.setdefault("simplification_level", "high" if sdoh_profile.get("literacy_level") == "low" else "medium")
     plan.setdefault("check_in_cadence", "daily")
@@ -71,7 +66,6 @@ def care_plan_node(state: PatientState) -> PatientState:
     plan.setdefault("caregiver_loop_enabled", sdoh_profile.get("caregiver_risk") in ("medium", "high"))
     plan.setdefault("red_flag_symptoms", kg_high.get("red_flags", []))
 
-    # Persist plan
     inserted = safe_insert(
         "care_plans",
         {
@@ -82,7 +76,6 @@ def care_plan_node(state: PatientState) -> PatientState:
     )
     tools_called.append("db:insert(care_plans)")
 
-    # Step 2: WhatsApp welcome to patient
     name = patient.get("name") or "Patient"
     welcome = _build_welcome(name, plan)
     media_url = None
@@ -107,7 +100,6 @@ def care_plan_node(state: PatientState) -> PatientState:
             },
         )
 
-    # Step 3: Email caregiver summary
     caregiver_email = patient.get("caregiver_email")
     if caregiver_email and plan.get("caregiver_loop_enabled"):
         subj = f"CareLoop care plan for {name}"
@@ -115,7 +107,6 @@ def care_plan_node(state: PatientState) -> PatientState:
         send_email(caregiver_email, subj, body)
         tools_called.append("email:caregiver_summary")
 
-    # Step 4: schedule check-ins (3× daily by default)
     try:
         from app.scheduler.jobs import schedule_daily_checkin
 
@@ -155,7 +146,6 @@ def care_plan_node(state: PatientState) -> PatientState:
 
 
 def _checkin_cadence_description(plan: dict) -> str:
-    """Human-readable check-in schedule for patient/caregiver messages."""
     n = int(plan.get("check_in_times_per_day") or 1)
     time_ = plan.get("check_in_time", "09:00")
     if n == 1:

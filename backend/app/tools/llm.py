@@ -28,13 +28,11 @@ def _client_singleton() -> Groq | None:
 
 
 def _is_rate_limit_error(exc: Exception) -> bool:
-    """Detect Groq 429 rate-limit errors."""
     msg = str(exc).lower()
     return "429" in msg or "rate_limit" in msg or "rate limit" in msg
 
 
 def _call_groq_json(client: Groq, model: str, temperature: float, messages: list, max_tokens: int = 2048) -> dict:
-    """Single Groq JSON call. Raises on any error."""
     resp = client.chat.completions.create(
         model=model,
         temperature=temperature,
@@ -101,10 +99,6 @@ def chat_json(prompt_key: str, **vars: Any) -> dict[str, Any]:
 
 
 def chat_text(prompt_key: str, **vars: Any) -> str:
-    """Same as chat_json but returns plain text (no response_format constraint).
-
-    On 429 rate-limit, retries once with the fast fallback model.
-    """
     client = _client_singleton()
     if client is None:
         return ""

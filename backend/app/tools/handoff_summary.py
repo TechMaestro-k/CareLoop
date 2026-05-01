@@ -25,7 +25,6 @@ REQUIRED_FIELDS: dict[str, Any] = {
 ADHERENCE_VALUES = {"unknown", "adherent", "missed_doses", "concern"}
 
 
-# ---------------- Loaders ----------------
 
 def _load_patient(patient_id: str) -> dict:
     rows = safe_select("patients", match={"id": patient_id}, limit=1)
@@ -52,7 +51,6 @@ def _load_latest_care_plan(patient_id: str) -> dict:
     if not rows:
         return {}
     row = rows[0]
-    # Schema column is `plan_json`; some test fixtures use `plan_data`. Accept either.
     return row.get("plan_json") or row.get("plan_data") or {}
 
 
@@ -79,13 +77,11 @@ def _load_slot_proposal(proposal_id: str) -> dict:
     return rows[0] if rows else {}
 
 
-# ---------------- Formatting ----------------
 
 def _format_transcript(interactions: list[dict]) -> str:
-    """Format interactions oldest-first, labelled Patient: / CareLoop: ."""
     if not interactions:
         return "(no prior conversation)"
-    rows = list(reversed(interactions))  # DB is newest-first → flip to oldest-first
+    rows = list(reversed(interactions))
     lines: list[str] = []
     for r in rows:
         content = (r.get("content") or "").strip()
@@ -153,10 +149,8 @@ def _summarize_booking(proposal: dict) -> str:
     return ", ".join(parts)
 
 
-# ---------------- Heuristics for fallback ----------------
 
 def _infer_adherence(interactions: list[dict]) -> str:
-    """Cheap keyword scan; safe default is 'unknown'."""
     text = " ".join(((r.get("content") or "") for r in interactions)).lower()
     if not text:
         return "unknown"
@@ -170,7 +164,6 @@ def _infer_adherence(interactions: list[dict]) -> str:
 
 
 def _infer_symptoms(interactions: list[dict]) -> list[str]:
-    """Best-effort symptom scrape from inbound messages."""
     keywords = [
         "breath", "dyspnea", "chest pain", "weight gain", "swelling", "edema",
         "cough", "dizzy", "dizziness", "nausea", "vomit", "fever", "fatigue",
@@ -270,7 +263,6 @@ def _build_fallback(
     }
 
 
-# ---------------- Normalization ----------------
 
 def _coerce_list(v: Any) -> list[str]:
     if v is None:
@@ -284,7 +276,6 @@ def _coerce_list(v: Any) -> list[str]:
 
 
 def _normalize(raw: dict, fallback: dict) -> dict:
-    """Make sure every required field is present and well-typed."""
     if not isinstance(raw, dict):
         raw = {}
     out: dict[str, Any] = {}
@@ -297,7 +288,6 @@ def _normalize(raw: dict, fallback: dict) -> dict:
         else:
             out[key] = str(raw.get(key)).strip() or fallback.get(key, default)
 
-    # Constrain adherence enum
     if out["medication_adherence"] not in ADHERENCE_VALUES:
         out["medication_adherence"] = fallback.get("medication_adherence", "unknown")
         if out["medication_adherence"] not in ADHERENCE_VALUES:
@@ -306,18 +296,11 @@ def _normalize(raw: dict, fallback: dict) -> dict:
     return out
 
 
-# ---------------- Public API ----------------
 
 def build_doctor_handoff_summary(
     patient_id: str,
     proposal_id: Optional[str] = None,
 ) -> dict:
-    """Return a doctor-facing handoff summary dict.
-
-    Always returns a dict with the required keys. Never raises on normal
-    failures (missing data, LLM unavailable, malformed JSON) — falls back
-    to a deterministic summary built from the same source data.
-    """
     try:
         patient = _load_patient(patient_id)
         clinical = _load_clinical(patient_id)
@@ -326,7 +309,7 @@ def build_doctor_handoff_summary(
         interactions = _load_latest_interactions(patient_id, limit=INTERACTIONS_LIMIT)
         escalations = _load_recent_escalations(patient_id, limit=ESCALATIONS_LIMIT)
         proposal = _load_slot_proposal(proposal_id) if proposal_id else {}
-    except Exception as e:  # pragma: no cover - defensive
+    except Exception as e:
         log.error("handoff_summary: data load failed for %s: %s", patient_id, e)
         return _normalize({}, _build_fallback(
             patient={}, clinical={}, sdoh={}, care_plan={},

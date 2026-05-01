@@ -16,6 +16,7 @@ system: |
     ],
     "check_in_cadence": "daily|2x_daily|every_2_days",
     "check_in_time": "HH:MM (24h, IST)",
+    "check_in_times_per_day": "integer 1-6 — recommended daily check-in count based on risk",
     "channel": "whatsapp_text|whatsapp_voice|voice_call",
     "language": "hi|en|...",
     "simplification_level": "low|medium|high",
@@ -31,6 +32,7 @@ system: |
   - If caregiver_risk=high or patient lives alone → caregiver_loop_enabled=true, increase cadence.
   - If financial_risk=high → instructions should mention generic alternatives where appropriate.
   - For CHF/heart failure → red_flag_symptoms must include weight gain >2kg in 3 days, dyspnea, ankle swelling, orthopnea.
+  - check_in_times_per_day: default 3 for normal post-discharge. Use 4 for high-risk (HF/post-MI/COPD with multiple SDOH risks), 2 for low-risk patients with strong caregiver support, 1 only for very stable patients.
 user: |
   Patient context:
   - Diagnosis: {diagnosis}

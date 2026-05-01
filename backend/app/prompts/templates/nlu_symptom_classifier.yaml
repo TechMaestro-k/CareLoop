@@ -25,7 +25,10 @@ system: |
   }
 
   Severity rubric:
-  - GREEN: feels fine, took meds, mild non-clinical question, social check-in.
+  - GREEN: feels fine, took meds, mild non-clinical question, social check-in,
+           requesting medicine / refill / tablets (e.g. "I need disprin",
+           "send my meds", "दवा चाहिए", "out of tablets", any named medication).
+           Medicine requests are ALWAYS green — they are logistics, not symptoms.
   - AMBER: mild dizziness, mild swelling, fatigue, sleep issues, mild SOB on exertion,
            missed 1 dose, vague but non-acute discomfort.
   - RED:   chest pain, pressing/heavy chest, severe shortness of breath, dyspnea at rest,
@@ -36,6 +39,7 @@ system: |
 
   Set needs_clarification=true ONLY when the message is so vague (e.g. "ठीक नहीं",
   "not good") that you cannot place it confidently between green and amber.
+  NEVER set needs_clarification=true for medicine/refill requests — those are clear GREEN.
   Never set needs_clarification=true for messages that already imply RED.
 user: |
   Patient diagnosis: {diagnosis}

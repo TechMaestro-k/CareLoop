@@ -17,7 +17,6 @@ log = logging.getLogger(__name__)
 
 
 def _compute_risk_score(patient_id: str) -> Optional[float]:
-    """Read the most recent context_builder trace and extract risk_score."""
     rows = safe_select(
         "reasoning_traces",
         match={"patient_id": patient_id, "agent_name": "context_builder"},

@@ -1,4 +1,3 @@
-"""Synthetic patients including the hero persona Mrs. Sharma."""
 from __future__ import annotations
 
 import logging
@@ -122,7 +121,6 @@ def _ensure_demo_doctor() -> str | None:
 
 
 def seed_inventory_low(patient_id: str):
-    """Seed initial 10-day med supply for demo purposes (medications_inventory table)."""
     from datetime import date
 
     today = date.today().isoformat()
@@ -140,7 +138,6 @@ def seed_inventory_low(patient_id: str):
 
 
 def run_seed() -> dict[str, Any]:
-    """Idempotent seeding: creates demo doctor and 3 patients with discharge + SDOH."""
     from app.agents.graph import run_onboarding
     from app.agents.state import empty_state
 
