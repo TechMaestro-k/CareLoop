@@ -15,7 +15,6 @@ WHISPER_MODEL = "whisper-large-v3"
 
 
 def download_twilio_media(media_url: str) -> Optional[str]:
-    """Download a Twilio media URL to a local temp file. Returns path or None."""
     if not media_url:
         return None
     try:
@@ -45,7 +44,6 @@ def download_twilio_media(media_url: str) -> Optional[str]:
 
 
 def transcribe_audio(file_path: str, language: Optional[str] = None) -> Optional[str]:
-    """Transcribe a local audio file with Groq Whisper. Returns text or None."""
     if not file_path or not os.path.exists(file_path):
         return None
     if not settings.groq_api_key:
@@ -72,7 +70,6 @@ def transcribe_audio(file_path: str, language: Optional[str] = None) -> Optional
 
 
 def transcribe_twilio_media(media_url: str, language: Optional[str] = None) -> Optional[str]:
-    """One-shot: download from Twilio + transcribe with Whisper."""
     path = download_twilio_media(media_url)
     if not path:
         return None

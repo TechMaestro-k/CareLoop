@@ -16,9 +16,6 @@ router = APIRouter(prefix="/messages", tags=["messages"])
 log = logging.getLogger(__name__)
 
 
-# Empty TwiML — tells Twilio "we accepted the message, do NOT auto-reply".
-# Our actual reply is sent out-of-band via the WhatsApp REST API inside
-# run_engagement().
 _EMPTY_TWIML = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
 
 
@@ -33,7 +30,6 @@ class SimulateRequest(BaseModel):
 
 @router.post("/simulate")
 def simulate(req: SimulateRequest):
-    """Bypass Twilio: pretend a patient sent us this WhatsApp text. For demo + testing."""
     rows = safe_select("patients", match={"id": req.patient_id}, limit=1)
     if not rows:
         raise HTTPException(status_code=404, detail="patient not found")
@@ -65,14 +61,6 @@ async def twilio_inbound(
     MediaUrl0: Optional[str] = Form(None),
     MediaContentType0: Optional[str] = Form(None),
 ):
-    """Twilio webhook for inbound WhatsApp messages.
-
-    Handles BOTH text and voice notes:
-    - Voice note (audio/* MediaContentType) → download from Twilio + Groq Whisper transcribe
-    - Text → use Body directly
-
-    Maps the inbound `From` number to a patient row, then runs engagement.
-    """
     sender = (From or "").replace("whatsapp:", "").strip()
     if not sender:
         log.warning("inbound webhook missing From")
@@ -84,7 +72,6 @@ async def twilio_inbound(
         return _twiml()
     patient = rows[0]
 
-    # Resolve message text — voice or text
     message_text = (Body or "").strip()
     transcribed = False
     try:
@@ -117,5 +104,4 @@ async def twilio_inbound(
     except Exception as e:
         log.error("inbound run_engagement failed: %s", e)
 
-    # Always 200 + empty TwiML so Twilio doesn't retry or echo a fallback.
     return _twiml()
