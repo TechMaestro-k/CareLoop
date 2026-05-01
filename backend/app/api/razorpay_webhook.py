@@ -33,7 +33,6 @@ async def razorpay_webhook(
     ref = (info.get("reference_id") or "").strip()
     payment_id = info.get("payment_id") or "pay_webhook"
 
-    # Slot consult fee — reference_id starts with "slot_<proposal_id>"
     if ref.startswith("slot_"):
         proposal_id = ref[len("slot_"):]
         rows = safe_select("slot_proposals", match={"id": proposal_id}, limit=1)

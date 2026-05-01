@@ -19,23 +19,12 @@ from app.tools.whatsapp import send_whatsapp
 router = APIRouter(prefix="/booking", tags=["booking"])
 log = logging.getLogger(__name__)
 
-# Backwards-compatible aliases. New code should read settings.consult_fee /
-# settings.consult_currency directly so prices can be overridden per-deploy.
 CONSULT_FEE_USD = settings.consult_fee
 CONSULT_CURRENCY = settings.consult_currency
 
 
-# ---------------- Public-base resolution ----------------
 
 def _public_base() -> str:
-    """Resolve the public HTTPS base URL the patient/doctor will see in links.
-
-    Order:
-      1. CARELOOP_PUBLIC_BASE        (explicit override)
-      2. REPLIT_DEPLOYMENT_DOMAIN    (production deploy)
-      3. REPLIT_DOMAINS              (dev / preview, comma-separated)
-      4. REPLIT_DEV_DOMAIN           (legacy)
-    """
     base = os.environ.get("CARELOOP_PUBLIC_BASE", "").strip()
     if base:
         return base.rstrip("/")
@@ -52,17 +41,15 @@ def _picker_url(proposal_id: str) -> str:
     return f"{base}/booking/{proposal_id}" if base else f"/booking/{proposal_id}"
 
 
-# ---------------- Schemas ----------------
 class SelectSlotRequest(BaseModel):
-    slot_iso: str  # must match one of the proposed_slots[].iso
+    slot_iso: str
 
 
 class DecisionRequest(BaseModel):
-    action: str  # accept | reject | reschedule
+    action: str
     note: Optional[str] = None
 
 
-# ---------------- Helpers ----------------
 
 def _patient_msg(body: str) -> str:
     return f"🩺 CareLoop\n{body.strip()}"
@@ -73,26 +60,9 @@ def _patient_phone_email(p: dict) -> tuple[str, str]:
 
 
 def _ensure_handoff_summary(p: dict) -> dict:
-    """Return the doctor handoff summary for this proposal.
-
-    Persistence strategy:
-      • Preferred: a top-level `doctor_handoff_summary` jsonb column on
-        slot_proposals (added by reset_and_init.sql).
-      • Fallback: nested under `chosen_slot.handoff_summary` so that when the
-        column does not exist (older Supabase schemas), we still cache the
-        summary inside an existing jsonb field instead of recomputing on
-        every page view.
-
-    If neither persistence path works the summary is computed in-memory and
-    returned without caching. Never raises.
-
-    Mutates `p` in-place so callers can use the value.
-    """
-    # 1. Already on the row? (top-level column)
     existing = p.get("doctor_handoff_summary")
     if isinstance(existing, dict) and existing:
         return existing
-    # 2. Already nested in chosen_slot? (fallback location)
     chosen = p.get("chosen_slot") if isinstance(p.get("chosen_slot"), dict) else None
     if chosen:
         nested = chosen.get("handoff_summary")
@@ -100,10 +70,9 @@ def _ensure_handoff_summary(p: dict) -> dict:
             p["doctor_handoff_summary"] = nested
             return nested
 
-    # 3. Build a fresh one.
     try:
         summary = build_doctor_handoff_summary(p["patient_id"], proposal_id=p.get("id"))
-    except Exception as e:  # pragma: no cover - defensive
+    except Exception as e:
         log.error("handoff summary build failed for %s: %s", p.get("id"), e)
         summary = {
             "summary": "AI handoff summary unavailable.",
@@ -115,8 +84,6 @@ def _ensure_handoff_summary(p: dict) -> dict:
             "doctor_focus": ["review patient record manually"],
         }
 
-    # 4. Try the top-level column first; if Supabase rejects it (PGRST204
-    # column-missing), nest inside chosen_slot which is guaranteed to exist.
     persisted = False
     try:
         res = safe_update(
@@ -124,10 +91,8 @@ def _ensure_handoff_summary(p: dict) -> dict:
             match={"id": p["id"]},
             values={"doctor_handoff_summary": summary},
         )
-        # safe_update returns None on failure (logged inside the helper),
-        # [] when zero rows matched, list of rows on success.
         persisted = res is not None and len(res) > 0
-    except Exception as e:  # pragma: no cover - defensive
+    except Exception as e:
         log.warning("persisting handoff summary (top-level) failed for %s: %s", p.get("id"), e)
 
     if not persisted and chosen is not None:
@@ -139,7 +104,7 @@ def _ensure_handoff_summary(p: dict) -> dict:
                 values={"chosen_slot": new_chosen},
             )
             p["chosen_slot"] = new_chosen
-        except Exception as e:  # pragma: no cover - defensive
+        except Exception as e:
             log.warning("persisting handoff summary (chosen_slot fallback) failed for %s: %s", p.get("id"), e)
 
     p["doctor_handoff_summary"] = summary
@@ -147,7 +112,6 @@ def _ensure_handoff_summary(p: dict) -> dict:
 
 
 def _fmt_ts(ts: str) -> str:
-    """Render an ISO timestamp in a doctor-friendly form (UTC)."""
     if not ts:
         return "unknown time"
     try:
@@ -173,17 +137,6 @@ def _format_handoff_for_email(
     escalations: list[dict] | None = None,
     chosen: dict | None = None,
 ) -> str:
-    """Render a tight, doctor-focused plain-text block for the email.
-
-    Sections (in order):
-      1. When the problem came up        — timestamp of latest patient message / escalation
-      2. What the patient is reporting   — LLM summary + symptoms + verbatim last message
-      3. Patient background              — diagnosis, comorbidities, prior escalations
-      4. Suggested focus for this call   — from the AI summary (kept short)
-
-    Deliberately drops SDOH and CareLoop-agent action logs from the email —
-    those still live in the on-screen handoff card for whoever wants them.
-    """
     summary = summary if isinstance(summary, dict) else {}
     patient = patient or {}
     clinical = clinical or {}
@@ -253,7 +206,6 @@ def _format_handoff_for_email(
     return "\n".join(parts)
 
 
-# ---------------- Endpoints ----------------
 @router.get("/{proposal_id}")
 def get_proposal(proposal_id: str):
     rows = safe_select("slot_proposals", match={"id": proposal_id}, limit=1)
@@ -271,11 +223,6 @@ def get_proposal(proposal_id: str):
 
 @router.post("/{proposal_id}/select")
 def patient_select(proposal_id: str, req: SelectSlotRequest):
-    """Patient picks a slot → we create a Razorpay payment link and DM it.
-
-    Doctor is intentionally NOT notified here. Doctor only sees the booking
-    once payment lands.
-    """
     rows = safe_select("slot_proposals", match={"id": proposal_id}, limit=1)
     if not rows:
         raise HTTPException(status_code=404, detail="proposal not found")
@@ -293,9 +240,8 @@ def patient_select(proposal_id: str, req: SelectSlotRequest):
     pat_name = pat_row.get("name", "Patient")
     pat_phone, pat_email = _patient_phone_email(pat_row)
 
-    # Create payment link for the consult fee
     pay = create_payment_link(
-        amount_rupees=CONSULT_FEE_USD,           # major-unit value (USD)
+        amount_rupees=CONSULT_FEE_USD,
         description=f"CareLoop telehealth consult — {pat_name} @ {chosen['human']}",
         customer_name=pat_name,
         customer_phone=pat_phone,
@@ -328,7 +274,6 @@ def patient_select(proposal_id: str, req: SelectSlotRequest):
         },
     )
 
-    # WhatsApp the patient with the payment link
     if pat_phone and pay.get("link"):
         msg = _patient_msg(
             f"You picked {chosen['human']}.\n\n"
@@ -347,10 +292,6 @@ def patient_select(proposal_id: str, req: SelectSlotRequest):
 
 @router.post("/{proposal_id}/simulate-payment")
 def simulate_payment(proposal_id: str):
-    """Mark this booking as paid without going through Razorpay.
-
-    Used by the demo UI's 'Pay (test mode)' button and by smoke tests.
-    """
     rows = safe_select("slot_proposals", match={"id": proposal_id}, limit=1)
     if not rows:
         raise HTTPException(status_code=404, detail="proposal not found")
@@ -375,24 +316,16 @@ def _mark_paid(p: dict, payment_id: str) -> dict:
         match={"id": p["id"]},
         values={"chosen_slot": chosen},
     )
-    # Mirror the just-persisted chosen_slot back onto the in-memory row so
-    # _ensure_handoff_summary's chosen_slot fallback path doesn't overwrite
-    # our freshly-written payment dict.
     p["chosen_slot"] = chosen
 
-    # Notify doctor + caregiver + patient that payment is received
     pat = safe_select("patients", match={"id": p["patient_id"]}, limit=1)
     pat_row = pat[0] if pat else {}
     pat_name = pat_row.get("name", "Patient")
     pat_phone, _ = _patient_phone_email(pat_row)
     accept_url = f"{_public_base()}/doctor/calendar"
 
-    # Ensure the AI handoff summary exists before pinging the doctor — this
-    # is what they'll see/receive when they open the calendar to accept.
     summary = _ensure_handoff_summary(p)
 
-    # Pull the extra context the email body needs (diagnosis, comorbidities,
-    # last patient message + timestamp, recent escalations).
     clinical_rows = safe_select("clinical_data", match={"patient_id": p["patient_id"]}, limit=1)
     clinical_row = clinical_rows[0] if clinical_rows else {}
     interactions = safe_select(
@@ -466,7 +399,6 @@ def doctor_decision(proposal_id: str, req: DecisionRequest):
                     "payment_status": payment.get("status", "pending"),
                 },
             )
-        # Make sure the doctor confirmation email includes the AI handoff summary.
         summary = _ensure_handoff_summary(p)
         booking = confirm_booking(
             patient_id=p["patient_id"],
@@ -487,7 +419,6 @@ def doctor_decision(proposal_id: str, req: DecisionRequest):
                 "calendar_link": booking["calendar_link"],
             },
         )
-        # Resolve all pending escalations for this patient so they leave the inbox.
         open_escs = safe_select(
             "escalations",
             match={"patient_id": p["patient_id"]},
@@ -553,7 +484,6 @@ def doctor_decision(proposal_id: str, req: DecisionRequest):
             "doctor_handoff_summary": summary,
         }
 
-    # reject / reschedule
     new_status = "rejected" if req.action == "reject" else "rescheduled"
     safe_update(
         "slot_proposals",
@@ -581,7 +511,6 @@ def list_proposals(
     doctor_status: Optional[str] = None,
     limit: int = 50,
 ):
-    """For the doctor calendar / inbox views."""
     match: dict = {}
     if patient_status:
         match["patient_status"] = patient_status
@@ -607,7 +536,6 @@ def create_proposal_from_agent(
     urgency: str,
     proposed_slots: list[dict],
 ) -> Optional[dict]:
-    """Helper used by the engagement agent to create a proposal row."""
     row = safe_insert(
         "slot_proposals",
         {
