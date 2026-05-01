@@ -1,27 +1,3 @@
-"""Agent 3: Engagement & Escalation.
-
-Inbound flow:
-  patient sends WhatsApp text or voice → /messages/inbound (or /simulate)
-  → engagement_node:
-       1. NLU classify (severity / confidence / needs_clarification)
-       2. If needs_clarification or low confidence → ask back, exit
-       3. If RED → create slot proposal (no payment yet),
-                   send patient picker URL,
-                   send doctor a redacted heads-up (severity + raw symptoms only,
-                   NO disease name, NO suggested clinical action),
-                   send caregiver an urgent heads-up.
-       4. If AMBER → give 1-2 concrete safe steps via LLM, alert caregiver.
-       5. If GREEN → light reinforcement via LLM (only if patient actually
-                     reported wellness; otherwise the LLM continues the
-                     conversation naturally).
-       6. Always: every send_whatsapp / send_email also gets appended to
-                  state["outgoing_messages"] / state["outgoing_emails"] so the
-                  /simulate endpoint can return the actual transcript to the UI.
-
-Outbound voice: when the patient's channel_pref is "whatsapp_voice", the
-reply text is also synthesized via gTTS and attached as media so the patient
-hears the message — same as the cron daily check-in path.
-"""
 from __future__ import annotations
 
 import logging
@@ -129,26 +105,32 @@ def _format_conversation_history(patient_id: str, *, limit: int = 8) -> str:
 
 def _send_wa(state: PatientState, *, to: str, body: str, kind: str, media_url: Optional[str] = None) -> dict:
     res = send_whatsapp(to, body, media_url=media_url)
-    state.setdefault("outgoing_messages", []).append({
+    entry: dict = {
         "to": kind,                # "patient" | "doctor" | "caregiver"
         "phone": to,
         "text": body,
         "media_url": media_url,
         "ok": bool(res.get("ok")),
         "mock": bool(res.get("mock")),
-    })
+    }
+    if not res.get("ok") and res.get("reason"):
+        entry["reason"] = str(res["reason"])
+    state.setdefault("outgoing_messages", []).append(entry)
     return res
 
 
 def _send_em(state: PatientState, *, to: str, subject: str, text: str, html: Optional[str], kind: str) -> dict:
     res = send_email(to, subject, text, html=html)
-    state.setdefault("outgoing_emails", []).append({
+    entry: dict = {
         "to": kind,
         "address": to,
         "subject": subject,
         "ok": bool(res.get("ok")),
         "mock": bool(res.get("mock")),
-    })
+    }
+    if not res.get("ok") and res.get("reason"):
+        entry["reason"] = str(res["reason"])
+    state.setdefault("outgoing_emails", []).append(entry)
     return res
 
 
@@ -407,11 +389,24 @@ def _maybe_voice(text: str, *, plan: dict, patient: dict) -> Optional[str]:
 
 # ---------------- Outbound English check-in (cron) ----------------
 
-def _build_checkin_prompt(plan: dict, name: str, *, conversation_history: str = "(no prior conversation)") -> str:
-    """LLM-driven, memory-aware morning check-in.
+def _get_slot_label() -> str:
+    """Return 'morning', 'afternoon', or 'evening' based on current IST time."""
+    from datetime import datetime, timezone, timedelta
+    IST = timezone(timedelta(hours=5, minutes=30))
+    now_ist = datetime.now(IST)
+    h = now_ist.hour
+    if 4 <= h < 12:
+        return "morning"
+    if 12 <= h < 17:
+        return "afternoon"
+    return "evening"
+
+
+def _build_checkin_prompt(plan: dict, name: str, *, conversation_history: str = "(no prior conversation)", slot_label: str = "morning") -> str:
+    """LLM-driven, memory-aware scheduled check-in.
 
     Pulls the last day or two of WhatsApp turns out of the patient's
-    interactions table and asks the LLM to write a short, varied morning
+    interactions table and asks the LLM to write a short, varied check-in
     ping that references whatever the patient told us yesterday — instead
     of asking the same generic three-symptom question every single day.
     Falls back to the safe generic line if the LLM is unavailable.
@@ -422,6 +417,7 @@ def _build_checkin_prompt(plan: dict, name: str, *, conversation_history: str = 
             patient_name=name or "there",
             red_flag_symptoms=", ".join(plan.get("red_flag_symptoms", []) or []) or "none",
             conversation_history=conversation_history,
+            slot_label=slot_label,
         )
         text = (text or "").strip().strip('"').strip()
         if text:
@@ -453,9 +449,11 @@ def engagement_node(state: PatientState) -> PatientState:
     state.setdefault("outgoing_emails", [])
     tools_called: list[str] = []
 
-    # --- CRON: daily check-in ---
+    # --- CRON: scheduled check-in ---
     if triggered_by == "cron":
-        # Pull yesterday's WhatsApp transcript so the morning ping can
+        # Compute slot label (morning/afternoon/evening) so the LLM can vary tone
+        slot_label = _get_slot_label()
+        # Pull recent WhatsApp transcript so the check-in ping can
         # reference what the patient actually told us — not a stock line.
         cron_history = _format_conversation_history(patient_id)
         msg = _patient_msg(
@@ -463,6 +461,7 @@ def engagement_node(state: PatientState) -> PatientState:
                 plan,
                 patient.get("name", "there"),
                 conversation_history=cron_history,
+                slot_label=slot_label,
             )
         )
         media_url = _maybe_voice(msg, plan=plan, patient=patient)
@@ -480,8 +479,8 @@ def engagement_node(state: PatientState) -> PatientState:
                     "agent_decision": "send_checkin",
                 },
             )
-        decided = "Sent daily check-in."
-        _persist_reasoning(patient_id, {"trigger": "cron"}, {}, decided, tools_called)
+        decided = f"Sent scheduled check-in (slot {slot_label})."
+        _persist_reasoning(patient_id, {"trigger": "cron", "slot": slot_label}, {}, decided, tools_called)
         state.setdefault("tools_called", []).extend(tools_called)
         state.setdefault("reasoning_steps", []).append(
             {"agent": "engagement", "observed": {"trigger": "cron"}, "inferred": {}, "decided": decided, "tools_called": tools_called}
@@ -585,14 +584,6 @@ def engagement_node(state: PatientState) -> PatientState:
             red_flag_hits.append(flag)
     if red_flag_hits and severity == "green":
         severity = "amber"
-
-    # NOTE: The pharmacy refill agent used to run inline here on every
-    # inbound message. That coupled triage to billing and meant a single
-    # patient text could fan out to three agents. Refills are now driven
-    # by the periodic scheduler job (`check_refills_for_all_patients`)
-    # and by an explicit, BackgroundTasks-deferred trigger raised from
-    # the inbound webhook when the patient asks for a refill in plain
-    # words. The triage path stays clean.
 
     # Build the LLM reply once — used for every severity
     reply_text = _llm_reply(

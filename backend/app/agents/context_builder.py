@@ -1,10 +1,3 @@
-"""Agent 1: Context Builder.
-
-Reads raw discharge text + SDOH responses → extracts clinical entities, classifies
-SDOH risks, builds a NetworkX knowledge graph, computes a fused risk score,
-and persists everything (clinical_data, sdoh_profiles, knowledge_graphs,
-reasoning_traces).
-"""
 from __future__ import annotations
 
 import logging

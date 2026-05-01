@@ -1,4 +1,3 @@
-"""Agent 2: Care Plan generator + initial outreach."""
 from __future__ import annotations
 
 import logging
@@ -61,6 +60,7 @@ def care_plan_node(state: PatientState) -> PatientState:
 
     # Defensive defaults
     plan.setdefault("channel", state.get("channel", "whatsapp_text"))
+    plan.setdefault("check_in_times_per_day", int(state.get("check_in_times_per_day") or 3))
     # Language posture: prefer the SDOH-derived language carried on state; only
     # fall back to English if nothing upstream produced a code. This is what lets
     # the gTTS voice path actually speak Hindi / Tamil / Bengali / etc.
@@ -115,12 +115,13 @@ def care_plan_node(state: PatientState) -> PatientState:
         send_email(caregiver_email, subj, body)
         tools_called.append("email:caregiver_summary")
 
-    # Step 4: schedule daily check-in
+    # Step 4: schedule check-ins (3× daily by default)
     try:
         from app.scheduler.jobs import schedule_daily_checkin
 
-        schedule_daily_checkin(patient_id, plan.get("check_in_time", "09:00"))
-        tools_called.append("scheduler:daily_checkin")
+        times_per_day = int(plan.get("check_in_times_per_day") or state.get("check_in_times_per_day") or 3)
+        schedule_daily_checkin(patient_id, plan.get("check_in_time", "09:00"), times_per_day=times_per_day)
+        tools_called.append(f"scheduler:daily_checkin×{times_per_day}")
     except Exception as e:
         log.warning("Scheduler unavailable: %s", e)
 
@@ -153,13 +154,29 @@ def care_plan_node(state: PatientState) -> PatientState:
     return state
 
 
-def _build_welcome(name: str, plan: dict) -> str:
-    cadence = plan.get("check_in_cadence", "daily")
+def _checkin_cadence_description(plan: dict) -> str:
+    """Human-readable check-in schedule for patient/caregiver messages."""
+    n = int(plan.get("check_in_times_per_day") or 1)
     time_ = plan.get("check_in_time", "09:00")
+    if n == 1:
+        return f"once a day at {time_}"
+    if n == 2:
+        return "twice a day (morning and evening)"
+    if n == 3:
+        return "3 times a day (morning, afternoon, and evening)"
+    if n == 4:
+        return "4 times a day (morning, midday, afternoon, and evening)"
+    if n == 6:
+        return "6 times a day (every 2 hours from morning to evening)"
+    return f"{n} times a day"
+
+
+def _build_welcome(name: str, plan: dict) -> str:
+    cadence_desc = _checkin_cadence_description(plan)
     return (
         f"🩺 CareLoop\n"
         f"Hi {name}, this is CareLoop — your post-discharge care companion.\n"
-        f"I'll check in with you {cadence.replace('_', ' ')} at {time_} for the next 30 days.\n"
+        f"I'll check in with you {cadence_desc} for the next 30 days.\n"
         f"Reply any time if something feels off — I'll loop in your doctor right away."
     )
 
@@ -170,9 +187,10 @@ def _build_caregiver_email(name: str, plan: dict, clinical: dict, sdoh: dict) ->
         f"  • {m.get('med')} at {m.get('time')} — {m.get('instruction')}" for m in sched
     ) or "  (none)"
     flags = ", ".join(plan.get("red_flag_symptoms", [])) or "(none listed)"
+    cadence_desc = _checkin_cadence_description(plan)
     return (
         f"Hi,\n\nCareLoop is now monitoring {name} after discharge.\n\n"
-        f"Daily check-in: {plan.get('check_in_cadence')} @ {plan.get('check_in_time')} via {plan.get('channel')}\n\n"
+        f"Check-in schedule: {cadence_desc} via {plan.get('channel')}\n\n"
         f"Medication schedule:\n{sched_lines}\n\n"
         f"Watch for these red-flag symptoms — message us immediately if you see them:\n  {flags}\n\n"
         f"You'll receive an email if anything escalates.\n\n— CareLoop"

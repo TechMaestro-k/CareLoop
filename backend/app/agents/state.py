@@ -1,4 +1,3 @@
-"""Shared PatientState passed between LangGraph agents."""
 from __future__ import annotations
 
 from typing import Any, TypedDict
@@ -31,6 +30,8 @@ class PatientState(TypedDict, total=False):
     channel: str
     # Patient context loaded from DB
     patient_record: dict[str, Any]
+    # Check-in frequency set at onboarding
+    check_in_times_per_day: int  # default 3
     # Inbound trigger metadata (engagement)
     triggered_by: str  # "cron" | "inbound" | "onboarding"
     # Outgoing transcript collectors (populated by engagement_node so the
