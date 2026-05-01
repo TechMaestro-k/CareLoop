@@ -1,4 +1,3 @@
-"""Reasoning trace endpoint — show why the agent acted."""
 from __future__ import annotations
 
 from fastapi import APIRouter

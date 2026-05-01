@@ -1,46 +1,24 @@
-"""Inbound message webhook + manual simulate endpoint."""
 from __future__ import annotations
 
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Form, HTTPException, Request
+from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.agents.graph import run_engagement
 from app.agents.state import empty_state
 from app.db.client import safe_select
-from app.scheduler.jobs import trigger_refill_for_patient
 from app.tools.transcription import transcribe_twilio_media
 
 router = APIRouter(prefix="/messages", tags=["messages"])
 log = logging.getLogger(__name__)
 
 
-# Plain-English / Hindi / Hinglish refill cues. The pharmacy agent itself
-# still gates on cooldown + actual low inventory, so a false positive here
-# is a no-op.
-_REFILL_KEYWORDS = (
-    "refill", "re-fill", "re fill",
-    "more medicine", "more meds", "more tablets", "out of meds",
-    "running out", "ran out", "finished my medicine",
-    "दवा", "दवाई", "गोली", "टैबलेट",
-)
-
-
-def _is_refill_request(message: str) -> bool:
-    if not message:
-        return False
-    m = message.lower()
-    return any(k in m for k in _REFILL_KEYWORDS)
-
-
 # Empty TwiML — tells Twilio "we accepted the message, do NOT auto-reply".
 # Our actual reply is sent out-of-band via the WhatsApp REST API inside
-# run_engagement(). Returning a non-TwiML body is what causes the Twilio
-# sandbox to fall back to "You said: ... Configure your WhatsApp Sandbox's
-# Inbound URL to change this message" once the URL field is set.
+# run_engagement().
 _EMPTY_TWIML = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
 
 
@@ -54,7 +32,7 @@ class SimulateRequest(BaseModel):
 
 
 @router.post("/simulate")
-def simulate(req: SimulateRequest, background_tasks: BackgroundTasks):
+def simulate(req: SimulateRequest):
     """Bypass Twilio: pretend a patient sent us this WhatsApp text. For demo + testing."""
     rows = safe_select("patients", match={"id": req.patient_id}, limit=1)
     if not rows:
@@ -67,12 +45,6 @@ def simulate(req: SimulateRequest, background_tasks: BackgroundTasks):
     state["channel"] = rows[0].get("channel_pref") or "whatsapp_text"
     state["triggered_by"] = "inbound"
     final = run_engagement(state)
-    # Explicit refill ask → defer the pharmacy agent so the triage reply
-    # has already gone out by the time we touch billing.
-    refill_queued = False
-    if _is_refill_request(req.message):
-        background_tasks.add_task(trigger_refill_for_patient, req.patient_id)
-        refill_queued = True
     return {
         "classification": final.get("classification"),
         "decision": final.get("decision"),
@@ -80,14 +52,12 @@ def simulate(req: SimulateRequest, background_tasks: BackgroundTasks):
         "whatsapp_sent": final.get("outgoing_messages", []),
         "emails_sent": final.get("outgoing_emails", []),
         "reasoning_steps": final.get("reasoning_steps", []),
-        "refill_queued": refill_queued,
     }
 
 
 @router.post("/inbound")
 async def twilio_inbound(
     request: Request,
-    background_tasks: BackgroundTasks,
     From: str = Form(""),
     Body: str = Form(""),
     To: str = Form(""),
@@ -146,8 +116,6 @@ async def twilio_inbound(
         run_engagement(state)
     except Exception as e:
         log.error("inbound run_engagement failed: %s", e)
-    # Refill keyword path: defer the pharmacy agent so triage stays snappy.
-    if _is_refill_request(message_text):
-        background_tasks.add_task(trigger_refill_for_patient, patient["id"])
+
     # Always 200 + empty TwiML so Twilio doesn't retry or echo a fallback.
     return _twiml()

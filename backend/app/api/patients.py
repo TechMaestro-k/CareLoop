@@ -1,4 +1,3 @@
-"""Patient onboarding + listing + detail endpoints."""
 from __future__ import annotations
 
 import logging
@@ -17,6 +16,26 @@ router = APIRouter(prefix="/patients", tags=["patients"])
 log = logging.getLogger(__name__)
 
 
+def _compute_risk_score(patient_id: str) -> Optional[float]:
+    """Read the most recent context_builder trace and extract risk_score."""
+    rows = safe_select(
+        "reasoning_traces",
+        match={"patient_id": patient_id, "agent_name": "context_builder"},
+        order=("timestamp", True),
+        limit=1,
+    )
+    if not rows:
+        return None
+    inferred = rows[0].get("inferred") or {}
+    rs = inferred.get("risk_score")
+    if rs is None:
+        return None
+    try:
+        return round(float(rs), 3)
+    except (TypeError, ValueError):
+        return None
+
+
 class OnboardRequest(BaseModel):
     name: str
     age: int
@@ -29,24 +48,17 @@ class OnboardRequest(BaseModel):
     discharge_text: str
     sdoh_responses: dict[str, Any] = Field(default_factory=dict)
     seed_low_inventory: bool = False
+    check_in_times_per_day: int = 3
 
 
 def _find_duplicate(name: str, phone: str) -> dict[str, Any] | None:
-    """Return an existing patient row that conflicts with (name, phone).
-
-    Match priority:
-      1. Same phone (strongest — phone is a real-world unique key for this domain).
-      2. Same case-insensitive name AND same phone (defensive against stray duplicates).
-    """
     norm_phone = (phone or "").strip()
     norm_name = (name or "").strip()
     if norm_phone:
         rows = safe_select("patients", match={"phone": norm_phone}, limit=1)
         if rows:
             return rows[0]
-    # Fallback: case-insensitive name match (only used when phone empty)
     if norm_name:
-        # safe_select doesn't expose ilike; do a small client-side filter.
         all_rows = safe_select("patients", limit=200)
         for r in all_rows:
             if (r.get("name") or "").strip().lower() == norm_name.lower():
@@ -99,8 +111,9 @@ def onboard(req: OnboardRequest):
     state["sdoh_responses"] = req.sdoh_responses
     state["language"] = req.language
     state["channel"] = req.channel_pref
-    state["patient_record"] = {**row}
     state["triggered_by"] = "onboarding"
+    state["check_in_times_per_day"] = max(1, min(10, req.check_in_times_per_day))
+    state["patient_record"] = {**row}
 
     final_state = run_onboarding(state)
 
@@ -118,13 +131,15 @@ def list_patients():
     rows = safe_select("patients", order=("created_at", True), limit=100)
     out = []
     for r in rows:
-        sdoh_rows = safe_select("sdoh_profiles", match={"patient_id": r["id"]}, limit=1)
-        clin_rows = safe_select("clinical_data", match={"patient_id": r["id"]}, limit=1)
+        pid = r["id"]
+        sdoh_rows = safe_select("sdoh_profiles", match={"patient_id": pid}, limit=1)
+        clin_rows = safe_select("clinical_data", match={"patient_id": pid}, limit=1)
         out.append(
             {
                 **r,
                 "diagnosis": clin_rows[0].get("diagnosis") if clin_rows else None,
                 "sdoh": sdoh_rows[0] if sdoh_rows else None,
+                "risk_score": _compute_risk_score(pid),
             }
         )
     return {"patients": out}
@@ -146,21 +161,17 @@ def get_patient(patient_id: str):
         "interactions", match={"patient_id": patient_id}, order=("timestamp", True), limit=20
     )
     inventory = safe_select("medications_inventory", match={"patient_id": patient_id})
-    orders = safe_select(
-        "pharmacy_orders", match={"patient_id": patient_id}, order=("created_at", True), limit=10
-    )
     escalations = safe_select(
         "escalations", match={"patient_id": patient_id}, order=("created_at", True), limit=10
     )
     return {
-        "patient": patient,
+        "patient": {**patient, "risk_score": _compute_risk_score(patient_id)},
         "clinical": clin[0] if clin else None,
         "sdoh": sdoh[0] if sdoh else None,
         "knowledge_graph": kg[0].get("graph_json") if kg else None,
         "care_plans": plans,
         "interactions": interactions,
         "medications_inventory": inventory,
-        "pharmacy_orders": orders,
         "escalations": escalations,
     }
 

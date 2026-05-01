@@ -1,29 +1,3 @@
-"""Slot-booking flow with payment gating.
-
-Booking lifecycle (English-only; per-consult fee is settings.consult_fee
-in settings.consult_currency, defaulting to USD $100):
-
-  agent (RED)        →  POST  proposal              creates row, gives patient a picker URL
-  patient (clicks)   →  GET   /booking/{id}         sees open slots
-  patient (picks)    →  POST  /booking/{id}/select  → CREATES Razorpay payment link
-                                                       sends patient WhatsApp with link
-                                                       (doctor is NOT notified yet)
-  patient (pays)     →  Razorpay webhook OR
-                         POST /booking/{id}/simulate-payment
-                                                       → marks paid, notifies doctor
-  doctor (decides)   →  POST  /booking/{id}/decision → on accept, finalises Jitsi+calendar
-
-The payment fields live inside `chosen_slot.payment` so we don't require a
-schema migration. Shape:
-
-  chosen_slot = {
-      iso, human, duration_min,
-      payment: {
-          status: "pending" | "paid" | "failed" | "refunded",
-          amount_usd, currency, link, link_id, reference_id, payment_id?
-      }
-  }
-"""
 from __future__ import annotations
 
 import logging
@@ -486,7 +460,11 @@ def doctor_decision(proposal_id: str, req: DecisionRequest):
         if payment.get("status") != "paid":
             raise HTTPException(
                 status_code=402,
-                detail="cannot accept — patient has not paid the consult fee yet",
+                detail={
+                    "message": "Patient has not paid the consult fee yet.",
+                    "hint": "Use the 'Simulate Payment' button in the doctor inbox to mark it paid for demo purposes.",
+                    "payment_status": payment.get("status", "pending"),
+                },
             )
         # Make sure the doctor confirmation email includes the AI handoff summary.
         summary = _ensure_handoff_summary(p)
@@ -509,6 +487,20 @@ def doctor_decision(proposal_id: str, req: DecisionRequest):
                 "calendar_link": booking["calendar_link"],
             },
         )
+        # Resolve all pending escalations for this patient so they leave the inbox.
+        open_escs = safe_select(
+            "escalations",
+            match={"patient_id": p["patient_id"]},
+            order=("created_at", True),
+            limit=20,
+        ) or []
+        for esc in open_escs:
+            if (esc.get("status") or "").lower() == "pending":
+                safe_update(
+                    "escalations",
+                    match={"id": esc["id"]},
+                    values={"status": "accepted", "doctor_action": "booking_confirmed"},
+                )
         if pat_phone:
             send_whatsapp(
                 pat_phone,

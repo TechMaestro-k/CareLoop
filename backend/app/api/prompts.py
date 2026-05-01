@@ -1,4 +1,3 @@
-"""Prompt registry endpoints — read all, edit one, view diff."""
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException

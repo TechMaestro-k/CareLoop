@@ -41,24 +41,11 @@ def summary() -> dict[str, Any]:
         order=("created_at", True),
         limit=500,
     )
-    orders = safe_select(
-        "pharmacy_orders",
-        columns="id,payment_status,created_at",
-        order=("created_at", True),
-        limit=500,
-    )
     sdoh = safe_select(
         "sdoh_profiles",
         columns="financial_risk,housing_risk,transport_risk,caregiver_risk,digital_comfort",
     )
 
-    # `sev_week` only counts the 7-day window AND only the three triage
-    # buckets we surface in the chart (RED/AMBER/GREEN). Severities written
-    # by the engagement agent are lower-case ("red", "amber"); we upper-case
-    # before comparing so we tolerate either casing.
-    # `open_escalations` is the *current* pending count and is intentionally
-    # NOT date-windowed — the dashboard hint reads "still open" so we want
-    # everything that has not yet been actioned by the doctor.
     sev_week: Counter[str] = Counter()
     open_escalations = 0
     for row in escalations:
@@ -68,15 +55,6 @@ def summary() -> dict[str, Any]:
             sev_week[sev] += 1
         if (row.get("status") or "").lower() == "pending":
             open_escalations += 1
-
-    refills_week = 0
-    refills_paid = 0
-    for row in orders:
-        ts = _parse_ts(row.get("created_at"))
-        if ts and ts >= week_ago:
-            refills_week += 1
-            if (row.get("payment_status") or "").lower() == "paid":
-                refills_paid += 1
 
     sdoh_high: Counter[str] = Counter()
     for row in sdoh:
@@ -108,8 +86,6 @@ def summary() -> dict[str, Any]:
             "patients": len(patients),
             "escalations_week": sum(sev_week.values()),
             "escalations_open": open_escalations,
-            "refills_week": refills_week,
-            "refills_paid": refills_paid,
         },
         "severity_chart": severity_chart,
         "sdoh_chart": sdoh_chart,
