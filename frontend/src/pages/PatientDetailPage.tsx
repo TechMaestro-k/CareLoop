@@ -1,33 +1,31 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { TriageBadge } from "@/components/TriageBadge";
 import { KGViewer } from "@/components/KGViewer";
-import { AIInsightCard } from "@/components/AIInsightCard";
-import { ChatPanel } from "@/components/ChatPanel";
 import { EmptyState } from "@/components/EmptyState";
 import { api } from "@/lib/api";
 import { formatTs, severityClass, initials } from "@/lib/utils";
-import { ArrowLeft, RefreshCw, Activity, FileText, Network, Sparkles, MessageSquare } from "lucide-react";
+import { ArrowLeft, RefreshCw, Activity, FileText, Network, Trash2 } from "lucide-react";
 
 export default function PatientDetailPage() {
   const params = useParams<{ patientId: string }>();
   const id = params.patientId!;
+  const navigate = useNavigate();
   const [data, setData] = useState<any>(null);
-  const [traces, setTraces] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function reload() {
     setLoading(true);
     setError(null);
     try {
-      const [d, t]: any[] = await Promise.all([api.getPatient(id), api.patientReasoning(id, 50)]);
+      const d: any = await api.getPatient(id);
       setData(d);
-      setTraces(t.traces || []);
     } catch (e: any) {
       setError(e.message || "Failed to load patient");
     } finally {
@@ -37,7 +35,25 @@ export default function PatientDetailPage() {
 
   useEffect(() => {
     void reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  async function removePatient() {
+    const name = data?.patient?.name || "this patient";
+    if (!window.confirm(`Remove ${name} from CareLoop? This also removes their related care records.`)) {
+      return;
+    }
+    setDeleting(true);
+    setError(null);
+    try {
+      await api.deletePatient(id);
+      navigate("/patients");
+    } catch (e: any) {
+      setError(e.message || "Failed to remove patient");
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   if (loading && !data) return <div className="text-sm text-ink-40">Loading patient…</div>;
   if (error) return <div className="card-base border-triage-red/30 bg-triage-redSoft p-4 text-sm text-triage-red">{error}</div>;
@@ -84,6 +100,10 @@ export default function PatientDetailPage() {
               <RefreshCw className="h-3.5 w-3.5" />
               Refresh
             </Button>
+            <Button variant="destructive" onClick={removePatient} disabled={deleting} size="sm">
+              <Trash2 className="h-3.5 w-3.5" />
+              {deleting ? "Removing..." : "Remove"}
+            </Button>
           </div>
         </div>
       </div>
@@ -94,9 +114,7 @@ export default function PatientDetailPage() {
           value={
             patient.risk_score != null
               ? `${(patient.risk_score * 100).toFixed(0)}%`
-              : (traces.find((t: any) => t.inferred?.risk_score != null)?.inferred?.risk_score != null
-                  ? `${(traces.find((t: any) => t.inferred?.risk_score != null)!.inferred.risk_score * 100).toFixed(0)}%`
-                  : "—")
+              : "-"
           }
           tone={
             patient.risk_score != null
@@ -120,9 +138,7 @@ export default function PatientDetailPage() {
         <TabsList className="flex flex-wrap">
           <TabsTrigger value="overview"><FileText className="mr-1 h-3.5 w-3.5" />Overview</TabsTrigger>
           <TabsTrigger value="plan"><Activity className="mr-1 h-3.5 w-3.5" />Care plan</TabsTrigger>
-          <TabsTrigger value="reasoning"><Sparkles className="mr-1 h-3.5 w-3.5" />AI reasoning</TabsTrigger>
           <TabsTrigger value="kg"><Network className="mr-1 h-3.5 w-3.5" />Knowledge graph</TabsTrigger>
-          <TabsTrigger value="chat"><MessageSquare className="mr-1 h-3.5 w-3.5" />Chat</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4">
@@ -227,14 +243,6 @@ export default function PatientDetailPage() {
           <CarePlanView plan={latestPlan} />
         </TabsContent>
 
-        <TabsContent value="reasoning" className="space-y-3">
-          {traces.length === 0 ? (
-            <EmptyState title="No reasoning traces yet" description="Run an interaction to see how the agents think." />
-          ) : (
-            traces.map((t) => <AIInsightCard key={t.id || `${t.agent_name}-${t.timestamp}`} trace={t} />)
-          )}
-        </TabsContent>
-
         <TabsContent value="kg">
           <Card>
             <CardHeader>
@@ -247,9 +255,6 @@ export default function PatientDetailPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="chat">
-          <ChatPanel patientId={id} patientName={patient.name} />
-        </TabsContent>
       </Tabs>
     </div>
   );

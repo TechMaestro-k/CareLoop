@@ -2,11 +2,12 @@ import type { Config } from "tailwindcss";
 
 const config: Config = {
   darkMode: ["class"],
-  content: ["./index.html", "./src*.{ts,tsx}"],
+  content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     container: { center: true, padding: "1.5rem", screens: { "2xl": "1400px" } },
     extend: {
       colors: {
+        // App surfaces
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
         surface: "hsl(var(--surface))",
@@ -16,6 +17,7 @@ const config: Config = {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
+        // CareLoop brand (design.md §3)
         primary: { DEFAULT: "hsl(var(--primary))", foreground: "hsl(var(--primary-foreground))" },
         mint: {
           DEFAULT: "#A8E6C9",
@@ -30,6 +32,7 @@ const config: Config = {
           40: "#697383",
           20: "#B6BDC8",
         },
+        // Triage palette
         triage: {
           red: "#E04050",
           redSoft: "#FDE7EA",

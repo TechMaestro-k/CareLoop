@@ -17,12 +17,14 @@ import { formatTs, triageBarClass } from "@/lib/utils";
 
 type Summary = Awaited<ReturnType<typeof api.insightsSummary>>;
 
+// Backend sends uppercase "RED" / "AMBER" / "GREEN"
 const SEVERITY_FILL: Record<string, string> = {
   RED: "#E04050",
   AMBER: "#E8A33C",
   GREEN: "#3FA875",
 };
 
+// Human-readable SDOH dimension labels
 const SDOH_LABEL: Record<string, string> = {
   financial_risk: "Financial risk",
   housing_risk: "Housing risk",
@@ -36,7 +38,6 @@ export default function DashboardPage() {
   const [escalations, setEscalations] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [seeding, setSeeding] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -57,29 +58,19 @@ export default function DashboardPage() {
 
   useEffect(() => { void load(); }, []);
 
-  async function runSeed() {
-    setSeeding(true);
-    try {
-      await api.seedDemo();
-      await load();
-    } catch (err: any) {
-      setError(err.message || "Seed failed");
-    } finally {
-      setSeeding(false);
-    }
-  }
-
   const t = summary?.totals;
 
+  // Prepare severity chart data (filter out zero counts for cleaner chart)
   const severityData = (summary?.severity_chart ?? []).filter((d) => d.count > 0);
 
+  // Prepare SDOH chart: map raw keys to labels, filter zeros
   const sdohData = (summary?.sdoh_chart ?? [])
     .filter((d) => d.count > 0)
     .map((d) => ({ ...d, label: SDOH_LABEL[d.dimension] ?? d.dimension }));
 
   return (
     <div className="space-y-8 pb-6">
-
+      {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 className="font-display text-2xl font-bold tracking-tight text-ink-DEFAULT">
@@ -97,9 +88,6 @@ export default function DashboardPage() {
               <UserPlus className="h-3.5 w-3.5" /> Onboard patient
             </Link>
           </Button>
-          <Button onClick={runSeed} disabled={seeding} variant="ghost" size="sm">
-            {seeding ? "Loading…" : "Load sample data"}
-          </Button>
         </div>
       </div>
 
@@ -109,7 +97,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-
+      {/* KPI strip */}
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-3">
         <KpiCard
           icon={<Users className="h-4 w-4" />}
@@ -136,9 +124,9 @@ export default function DashboardPage() {
         />
       </section>
 
-
+      {/* Charts row */}
       <section className="grid gap-5 lg:grid-cols-2">
-
+        {/* Severity chart */}
         <Card className="overflow-hidden">
           <CardHeader className="pb-0">
             <CardTitle className="text-base font-semibold">Escalations by severity</CardTitle>
@@ -192,7 +180,7 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
-
+        {/* SDOH risk chart */}
         <Card className="overflow-hidden">
           <CardHeader className="pb-0">
             <CardTitle className="text-base font-semibold">High-risk SDOH flags</CardTitle>
@@ -250,7 +238,7 @@ export default function DashboardPage() {
         </Card>
       </section>
 
-
+      {/* Open escalations list */}
       <section>
         <div className="mb-3 flex items-center justify-between">
           <div>
@@ -284,7 +272,7 @@ export default function DashboardPage() {
                 to={`/doctor/escalations/${e.id}`}
                 className={`flex items-center gap-4 rounded-xl border border-transparent bg-white px-4 py-3 shadow-card transition hover:shadow-soft hover:border-border ${triageBarClass(e.severity)}`}
               >
-
+                {/* Avatar */}
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-mint-soft text-xs font-bold text-mint-ink">
                   {(e.patient?.name || e.patient_id || "?")
                     .split(" ")

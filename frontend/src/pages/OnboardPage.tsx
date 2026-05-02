@@ -63,7 +63,7 @@ export default function OnboardPage() {
         </p>
       </header>
 
-
+      {/* Step indicator */}
       <div className="flex items-center gap-3 text-sm">
         <button
           className={`flex items-center gap-1.5 font-medium transition ${step === "discharge" ? "text-mint-deep" : "text-ink-40 hover:text-ink-DEFAULT"}`}
@@ -87,7 +87,7 @@ export default function OnboardPage() {
         </button>
       </div>
 
-
+      {/* Step 1: Discharge */}
       {step === "discharge" && (
         <Card>
           <CardHeader>
@@ -111,7 +111,7 @@ export default function OnboardPage() {
         </Card>
       )}
 
-
+      {/* Step 2: SDOH */}
       {step === "sdoh" && (
         <Card>
           <CardHeader>
