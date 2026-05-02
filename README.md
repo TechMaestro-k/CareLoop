@@ -7,7 +7,6 @@ CareLoop monitors patients for **30 days after hospital discharge** — on their
 
 It treats **Social Determinants of Health (SDOH)** like literacy, digital comfort, finances, transport, and caregiver presence as first-class routing inputs, alongside the clinical picture. A patient with low literacy receives a voice note instead of a text; a patient who lives alone gets the caregiver looped in automatically — same care plan, different deliveries.
 
-**Hero persona:** Mrs. Sharma, 68, Jaipur, post-CHF discharge.
 **Live demo:** https://www.careloops.tech
 **Docs:** see [`API.md`](./API.md) for the full API reference
 
