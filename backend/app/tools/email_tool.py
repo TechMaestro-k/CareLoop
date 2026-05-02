@@ -49,8 +49,8 @@ def _html_wrapper(title: str, body_html: str) -> str:
             <td style="background:#f8fafc;padding:18px 36px;border-top:1px solid #e2e8f0;
                        text-align:center;color:#94a3b8;font-size:12px;">
               CareLoop · Reducing hospital readmissions through AI-powered care<br/>
-              <a href="https://www.careloops.com" style="color:#0ea5e9;text-decoration:none;">
-                www.careloops.com
+              <a href="https://www.careloops.tech" style="color:#0ea5e9;text-decoration:none;">
+                www.careloops.tech
               </a>
             </td>
           </tr>

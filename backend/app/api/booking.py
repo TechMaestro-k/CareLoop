@@ -46,10 +46,9 @@ from app.tools.whatsapp import format_whatsapp_message, send_whatsapp
 router = APIRouter(prefix="/booking", tags=["booking"])
 log = logging.getLogger(__name__)
 
-# Backwards-compatible aliases. New code should read settings.consult_fee /
-# settings.consult_currency directly so prices can be overridden per-deploy.
-CONSULT_FEE_USD = 100.0
-CONSULT_CURRENCY = "USD"
+# Backwards-compatible aliases now read from settings so .env controls the price.
+CONSULT_FEE_USD = settings.consult_fee
+CONSULT_CURRENCY = settings.consult_currency
 
 
 # ---------------- Public-base resolution ----------------
