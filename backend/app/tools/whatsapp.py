@@ -41,7 +41,7 @@ def _normalize(to: str) -> str:
 
 def _status_callback_url() -> Optional[str]:
     """Where Twilio should POST delivery status updates.
-    Set PUBLIC_BASE_URL=https://www.careloops.com in env. Falls back to None
+    Set PUBLIC_BASE_URL=https://www.careloops.tech in env. Falls back to None
     (Twilio uses whatever is configured at the sender level)."""
     base = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
     if not base:

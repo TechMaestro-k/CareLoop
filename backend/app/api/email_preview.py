@@ -90,6 +90,6 @@ def email_status():
         "preview_patient": "/api/email/preview/patient",
         "preview_caregiver": "/api/email/preview/caregiver",
         "test_send_endpoint": "POST /api/email/test-send  body: {to, type, name}",
-        "twilio_webhook_url": "https://www.careloops.com/api/messages/inbound",
+        "twilio_webhook_url": "https://www.careloops.tech/api/messages/inbound",
         "twilio_note": "Set this URL in Twilio sandbox: Messaging > Sandbox > 'When a message comes in'",
     }

@@ -140,7 +140,7 @@ async def twilio_status_callback(
 
     Configure this URL in Twilio Console as the StatusCallback for your
     WhatsApp sender:
-        https://www.careloops.com/api/messages/status
+        https://www.careloops.tech/api/messages/status
     """
     if ErrorCode:
         log.warning(
