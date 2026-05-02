@@ -8,6 +8,7 @@ COPY frontend/ ./
 ENV VITE_API_BASE=""
 RUN npm run build
 
+
 FROM python:3.11-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
