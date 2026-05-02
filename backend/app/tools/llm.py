@@ -1,3 +1,13 @@
+"""Groq LLM wrapper for both reasoning (Llama 3.3 70B) and NLU (Llama 3.1 8B Instant).
+
+The wrapper exposes two entrypoints:
+  - chat_json(prompt_key, **vars)  — returns parsed JSON dict
+  - chat_text(prompt_key, **vars)  — returns plain text
+
+On 429 rate-limit errors, both automatically retry once using the fast
+llama-3.1-8b-instant fallback model so conversations stay live even when
+the daily token quota on the large model is exhausted.
+"""
 from __future__ import annotations
 
 import json
@@ -28,11 +38,13 @@ def _client_singleton() -> Groq | None:
 
 
 def _is_rate_limit_error(exc: Exception) -> bool:
+    """Detect Groq 429 rate-limit errors."""
     msg = str(exc).lower()
     return "429" in msg or "rate_limit" in msg or "rate limit" in msg
 
 
 def _call_groq_json(client: Groq, model: str, temperature: float, messages: list, max_tokens: int = 2048) -> dict:
+    """Single Groq JSON call. Raises on any error."""
     resp = client.chat.completions.create(
         model=model,
         temperature=temperature,
@@ -45,6 +57,7 @@ def _call_groq_json(client: Groq, model: str, temperature: float, messages: list
 
 
 def _call_groq_text(client: Groq, model: str, temperature: float, messages: list, max_tokens: int = 1024) -> str:
+    """Single Groq text call. Raises on any error."""
     resp = client.chat.completions.create(
         model=model,
         temperature=temperature,
@@ -55,6 +68,11 @@ def _call_groq_text(client: Groq, model: str, temperature: float, messages: list
 
 
 def chat_json(prompt_key: str, **vars: Any) -> dict[str, Any]:
+    """Call Groq with the named prompt; return parsed JSON dict.
+
+    On 429 rate-limit, retries once with the fast fallback model.
+    On any other failure, returns {} so callers can degrade gracefully.
+    """
     client = _client_singleton()
     if client is None:
         return {}
@@ -99,6 +117,10 @@ def chat_json(prompt_key: str, **vars: Any) -> dict[str, Any]:
 
 
 def chat_text(prompt_key: str, **vars: Any) -> str:
+    """Same as chat_json but returns plain text (no response_format constraint).
+
+    On 429 rate-limit, retries once with the fast fallback model.
+    """
     client = _client_singleton()
     if client is None:
         return ""

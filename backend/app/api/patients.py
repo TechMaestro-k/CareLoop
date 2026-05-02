@@ -1,6 +1,6 @@
+"""Patient onboarding + listing + detail endpoints."""
 from __future__ import annotations
 
-import logging
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -9,14 +9,13 @@ from pydantic import BaseModel, Field
 from app.agents.graph import run_onboarding
 from app.agents.state import empty_state
 from app.config import settings
-from app.db.client import safe_insert, safe_select
-from app.seed.synthetic_patients import seed_inventory_low
+from app.db.client import safe_delete, safe_insert, safe_select
 
 router = APIRouter(prefix="/patients", tags=["patients"])
-log = logging.getLogger(__name__)
 
 
 def _compute_risk_score(patient_id: str) -> Optional[float]:
+    """Read the most recent context_builder trace and extract risk_score."""
     rows = safe_select(
         "reasoning_traces",
         match={"patient_id": patient_id, "agent_name": "context_builder"},
@@ -46,7 +45,6 @@ class OnboardRequest(BaseModel):
     caregiver_email: Optional[str] = None
     discharge_text: str
     sdoh_responses: dict[str, Any] = Field(default_factory=dict)
-    seed_low_inventory: bool = False
     check_in_times_per_day: int = 3
 
 
@@ -101,9 +99,6 @@ def onboard(req: OnboardRequest):
     if not row:
         raise HTTPException(status_code=500, detail="Failed to create patient row")
     pid = row["id"]
-    if req.seed_low_inventory:
-        seed_inventory_low(pid)
-
     state = empty_state()
     state["patient_id"] = pid
     state["raw_discharge_text"] = req.discharge_text
@@ -121,7 +116,6 @@ def onboard(req: OnboardRequest):
         "risk_score": final_state.get("risk_score"),
         "care_plan": final_state.get("care_plan"),
         "knowledge_graph": final_state.get("knowledge_graph_json"),
-        "reasoning_steps": final_state.get("reasoning_steps", []),
     }
 
 
@@ -175,7 +169,20 @@ def get_patient(patient_id: str):
     }
 
 
-@router.post("/{patient_id}/seed-low-inventory")
-def trigger_low_inventory(patient_id: str):
-    seed_inventory_low(patient_id)
-    return {"ok": True}
+@router.delete("/{patient_id}")
+def delete_patient(patient_id: str):
+    rows = safe_select("patients", match={"id": patient_id}, limit=1)
+    if not rows:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    try:
+        from app.scheduler.jobs import cancel_patient_jobs
+
+        cancel_patient_jobs(patient_id)
+    except Exception:
+        pass
+
+    deleted = safe_delete("patients", match={"id": patient_id})
+    if deleted is None:
+        raise HTTPException(status_code=500, detail="Failed to remove patient")
+    return {"ok": True, "patient_id": patient_id}

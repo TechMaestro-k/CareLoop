@@ -1,3 +1,8 @@
+"""TTS for outbound WhatsApp voice notes via gTTS (Google Translate).
+
+Why gTTS: no auth, works inside containers, decent Hindi/English voices.
+Files are written to AUDIO_DIR and served by FastAPI at /audio/<file>.
+"""
 from __future__ import annotations
 
 import logging
@@ -31,6 +36,7 @@ def _lang_code(language: str) -> str:
 
 
 def synthesize_sync(text: str, language: str = "hi") -> Optional[Path]:
+    """Synthesize speech to an MP3 file. Returns Path or None on failure."""
     if not text or not text.strip():
         return None
     try:
@@ -44,6 +50,11 @@ def synthesize_sync(text: str, language: str = "hi") -> Optional[Path]:
 
 
 def public_audio_url(path: Path, base_url: Optional[str] = None) -> str:
+    """Build the public HTTPS URL Twilio can fetch.
+
+    Order: explicit arg → CARELOOP_PUBLIC_BASE → REPLIT_DEV_DOMAIN → ''.
+    Always returns an https://... URL when REPLIT_DEV_DOMAIN is present.
+    """
     base = (base_url or "").strip()
     if not base:
         base = os.environ.get("CARELOOP_PUBLIC_BASE", "").strip()

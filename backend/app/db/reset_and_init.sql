@@ -212,4 +212,3 @@ create index idx_med_supply_program_end      on medication_support_plans(program
 notify pgrst, 'reload schema';
 
 -- Done. You should see "Success. No rows returned." Now hit POST /api/seed
--- (or use the reseed script) to populate demo data.

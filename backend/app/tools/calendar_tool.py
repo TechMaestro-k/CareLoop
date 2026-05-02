@@ -1,3 +1,13 @@
+"""Auto-book telehealth slot using free, no-auth services.
+
+- **Jitsi Meet** is used for the actual video room. Free, instant, no signup
+  for either party — both doctor and patient just open the link in a browser.
+- **Google Calendar TEMPLATE link** so the doctor (and caregiver, if attached)
+  can one-click "Add to Calendar" without us holding any OAuth credentials.
+
+Returned fields are deliberately self-contained so callers can drop them into
+emails / WhatsApp / UIs without any further composition.
+"""
 from __future__ import annotations
 
 import secrets
@@ -10,6 +20,13 @@ SLOT_DURATION_MIN = 15
 
 
 def propose_slots(urgency: str = "today", count: int = 4) -> list[dict]:
+    """Generate `count` candidate slots in business hours (09:00–21:00 IST).
+
+    - urgency='now' → starts in 15 min, slots every 30 min
+    - urgency='today' → starts in 30 min, slots every 60 min
+    - urgency='tomorrow' → next day 10:00 onward, slots every 60 min
+    Skips past business hours by rolling to next business day.
+    """
     now = datetime.now(IST)
     if urgency == "now":
         first = now + timedelta(minutes=15)
@@ -47,6 +64,9 @@ def build_jitsi_room(patient_id: str) -> str:
 
 
 def jitsi_link(room: str) -> str:
+    # HARDCODED: meet.jit.si is the public Jitsi Meet instance we rely on for
+    # this lightweight deployment. Swap to a self-hosted Jitsi or a
+    # paid video provider in prod by replacing this base URL.
     return f"https://meet.jit.si/{room}#config.prejoinPageEnabled=false"
 
 
@@ -59,6 +79,7 @@ def confirm_booking(
     headline: Optional[str] = None,
     caregiver_email: Optional[str] = None,
 ) -> dict:
+    """Build the final, doctor-accepted booking artifacts (Jitsi + calendar URL)."""
     room = build_jitsi_room(patient_id)
     join_link = jitsi_link(room)
     start = datetime.fromisoformat(chosen_slot["iso"])
@@ -85,6 +106,7 @@ def confirm_booking(
 
 
 def _next_slot(urgency: str) -> datetime:
+    """Pick the next reasonable slot. Business hours window: 09:00–21:00 IST."""
     now = datetime.now(IST)
     if urgency == "now":
         return now + timedelta(minutes=15)
@@ -103,6 +125,12 @@ def _next_slot(urgency: str) -> datetime:
 def _gcal_template_url(
     *, title: str, start: datetime, end: datetime, details: str, guests: list[str]
 ) -> str:
+    """Build a Google Calendar TEMPLATE URL.
+
+    Clicking it opens Google Calendar's "Create event" form pre-filled. No
+    OAuth required. The event lands on the clicker's primary calendar; guests
+    receive the standard invite.
+    """
     def fmt(d: datetime) -> str:
         return d.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
@@ -115,6 +143,9 @@ def _gcal_template_url(
     }
     if guests:
         params["add"] = ",".join(guests)
+    # HARDCODED: Google Calendar's public template URL. No OAuth needed; this
+    # is a stable, documented endpoint. Replace only if migrating away from
+    # Google Calendar entirely.
     return "https://calendar.google.com/calendar/render?" + urlencode(params)
 
 
@@ -126,10 +157,14 @@ def book_telehealth_slot(
     headline: Optional[str] = None,
     caregiver_email: Optional[str] = None,
 ) -> dict:
+    """Book a telehealth slot. Returns dict with real, working links."""
     slot = _next_slot(urgency)
     end = slot + timedelta(minutes=SLOT_DURATION_MIN)
 
+    # Jitsi room — namespaced + random suffix so old links stay valid but each
+    # booking gets its own private room.
     room = f"CareLoop-{patient_id[:8]}-{secrets.token_hex(3)}"
+    # HARDCODED: see jitsi_link() above — public meet.jit.si instance.
     join_link = f"https://meet.jit.si/{room}#config.prejoinPageEnabled=false"
 
     name = patient_name or "Patient"

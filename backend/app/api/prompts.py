@@ -1,3 +1,4 @@
+"""Prompt registry endpoints — read all, edit one, view diff."""
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
@@ -20,6 +21,8 @@ def all_prompts():
 
 @router.post("/_reload")
 def reload_prompts():
+    """Force-clear the in-process prompt cache and re-list. Useful after
+    editing the YAML files on disk or pasting a new override row directly."""
     cleared = clear_prompt_cache()
     return {"ok": True, "cleared": cleared, "prompts": list_prompts()}
 

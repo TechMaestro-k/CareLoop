@@ -1,3 +1,9 @@
+"""NetworkX knowledge graph builder + query helpers.
+
+The KG fuses clinical entities (diagnosis, medications, comorbidities) with
+SDOH dimensions and routes (channel, escalation paths). Edges carry weights
+that the LLM uses as context when authoring care plans.
+"""
 from __future__ import annotations
 
 import json
@@ -7,7 +13,9 @@ import networkx as nx
 from networkx.readwrite import json_graph
 
 
+# Domain rules linking SDOH risk to channel / cadence / caregiver loop
 SDOH_TO_ROUTE_RULES = [
+    # (predicate(profile_dict) -> bool, target_node, weight, label)
     (lambda p: p.get("digital_comfort") == "low", "channel:whatsapp_voice", 0.9, "needs_voice"),
     (lambda p: p.get("digital_comfort") == "high", "channel:whatsapp_text", 0.7, "text_ok"),
     (lambda p: p.get("literacy_level") == "low", "simplification:high", 0.9, "low_literacy"),
@@ -17,6 +25,7 @@ SDOH_TO_ROUTE_RULES = [
     (lambda p: p.get("financial_risk") == "high", "telehealth:preferred", 0.85, "low_income"),
 ]
 
+# Diagnosis-specific red flags
 DIAGNOSIS_RED_FLAGS: dict[str, list[str]] = {
     "chf": [
         "weight gain >2kg in 3 days",
@@ -51,8 +60,10 @@ def diagnosis_red_flags(diagnosis: str) -> list[str]:
 def build_patient_graph(
     clinical: dict[str, Any], sdoh_profile: dict[str, Any]
 ) -> nx.DiGraph:
+    """Construct the patient KG. Returns a DiGraph with weighted edges."""
     g: nx.DiGraph = nx.DiGraph()
 
+    # Nodes: diagnosis + comorbidities
     diagnosis = (clinical.get("diagnosis") or "").strip()
     if diagnosis:
         g.add_node(f"dx:{diagnosis}", kind="diagnosis", label=diagnosis)
@@ -62,6 +73,7 @@ def build_patient_graph(
             if diagnosis:
                 g.add_edge(f"dx:{diagnosis}", f"comorb:{c}", weight=0.4, label="comorbid_with")
 
+    # Nodes: medications
     for med in clinical.get("medications") or []:
         name = (med.get("name") or "").strip() if isinstance(med, dict) else str(med)
         if not name:
@@ -70,6 +82,7 @@ def build_patient_graph(
         if diagnosis:
             g.add_edge(f"dx:{diagnosis}", f"med:{name}", weight=0.6, label="treated_with")
 
+    # Nodes: SDOH dimensions
     for dim in (
         "housing_risk",
         "transport_risk",
@@ -83,12 +96,14 @@ def build_patient_graph(
             node = f"sdoh:{dim}={risk}"
             g.add_node(node, kind="sdoh", dimension=dim, risk=risk, label=f"{dim}: {risk}")
 
+    # Nodes: red flags
     for flag in diagnosis_red_flags(diagnosis):
         node = f"flag:{flag}"
         g.add_node(node, kind="red_flag", label=flag)
         if diagnosis:
             g.add_edge(f"dx:{diagnosis}", node, weight=0.95, label="watch_for")
 
+    # Routing nodes (decision targets)
     for n in [
         "channel:whatsapp_text",
         "channel:whatsapp_voice",
@@ -100,9 +115,11 @@ def build_patient_graph(
     ]:
         g.add_node(n, kind="route", label=n)
 
+    # Apply SDOH→route weighted edges
     for predicate, target, weight, label in SDOH_TO_ROUTE_RULES:
         try:
             if predicate(sdoh_profile):
+                # Find which sdoh node fired this rule
                 for sdoh_node in [n for n in g.nodes if n.startswith("sdoh:")]:
                     g.add_edge(sdoh_node, target, weight=weight, label=label)
         except Exception:
@@ -112,6 +129,7 @@ def build_patient_graph(
 
 
 def graph_to_json(g: nx.DiGraph) -> dict[str, Any]:
+    """Serialize for storage / frontend (react-force-graph-2d format)."""
     try:
         raw = json_graph.node_link_data(g, edges="edges")
     except TypeError:
@@ -148,6 +166,7 @@ def graph_from_json(data: dict[str, Any]) -> nx.DiGraph:
 
 
 def kg_highlights(g: nx.DiGraph) -> dict[str, Any]:
+    """Pull a few high-signal facts for prompt context."""
     high_risk_sdoh = [
         n[len("sdoh:"):]
         for n in g.nodes
