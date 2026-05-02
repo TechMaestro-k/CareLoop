@@ -16,14 +16,14 @@ system: |
     ],
     "check_in_cadence": "daily|2x_daily|every_2_days",
     "check_in_time": "HH:MM (24h, IST)",
-    "check_in_times_per_day": "integer 1-6 — recommended daily check-in count based on risk",
+    "check_in_times_per_day": integer from 1 to 6,
     "channel": "whatsapp_text|whatsapp_voice|voice_call",
     "language": "hi|en|...",
     "simplification_level": "low|medium|high",
     "red_flag_symptoms": ["string"],
     "escalation_thresholds": {"weight_gain_kg_per_3d": number, "spo2_below": number},
     "caregiver_loop_enabled": bool,
-    "reasoning": "1-3 paragraphs explaining each major decision, especially how SDOH shaped channel/cadence/simplification."
+    "reasoning": "2-4 concise sentences explaining each major decision, especially how SDOH shaped channel/cadence/simplification."
   }
 
   Rules:

@@ -1,3 +1,4 @@
+"""Doctor-facing endpoints: escalation queue + brief detail + action."""
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
@@ -34,21 +35,17 @@ def get_escalation(esc_id: str):
     interactions = safe_select(
         "interactions", match={"patient_id": pid}, order=("timestamp", True), limit=15
     )
-    traces = safe_select(
-        "reasoning_traces", match={"patient_id": pid}, order=("timestamp", True), limit=10
-    )
     return {
         "escalation": esc,
         "patient": patient[0] if patient else None,
         "clinical": clin[0] if clin else None,
         "sdoh": sdoh[0] if sdoh else None,
         "interactions": interactions,
-        "reasoning_traces": traces,
     }
 
 
 class ActionRequest(BaseModel):
-    action: str
+    action: str  # accept | reject | reschedule
     note: str | None = None
 
 

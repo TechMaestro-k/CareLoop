@@ -26,7 +26,9 @@ async function http<T = any>(path: string, init?: RequestInit): Promise<T> {
     let body: any = text;
     try {
       body = JSON.parse(text);
-    } catch {}
+    } catch {
+      /* leave as text */
+    }
     throw new ApiError(res.status, res.statusText, body);
   }
   if (res.status === 204) return null as unknown as T;
@@ -36,19 +38,14 @@ async function http<T = any>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   health: () => http("/api/healthz"),
 
+  // patients
   listPatients: () => http<{ patients: any[] }>("/api/patients"),
   getPatient: (id: string) => http(`/api/patients/${id}`),
   onboard: (payload: any) =>
     http("/api/patients/onboard", { method: "POST", body: JSON.stringify(payload) }),
-  seedLowInventory: (id: string) =>
-    http(`/api/patients/${id}/seed-low-inventory`, { method: "POST" }),
+  deletePatient: (id: string) => http(`/api/patients/${id}`, { method: "DELETE" }),
 
-  simulate: (patient_id: string, message: string) =>
-    http("/api/messages/simulate", {
-      method: "POST",
-      body: JSON.stringify({ patient_id, message }),
-    }),
-
+  // doctor
   listEscalations: (status?: string) =>
     http<{ escalations: any[] }>(
       `/api/doctor/escalations${status ? `?status=${status}` : ""}`,
@@ -60,6 +57,7 @@ export const api = {
       body: JSON.stringify({ action, note }),
     }),
 
+  // prompts
   listPrompts: () => http<{ prompts: any[] }>("/api/prompts"),
   getPrompt: (key: string) => http(`/api/prompts/${key}`),
   updatePrompt: (key: string, template: string) =>
@@ -86,15 +84,11 @@ export const api = {
       { method: "POST" },
     ),
 
-  recentReasoning: (limit = 50) => http<{ traces: any[] }>(`/api/reasoning/recent?limit=${limit}`),
-  patientReasoning: (id: string, limit = 25) =>
-    http<{ traces: any[] }>(`/api/reasoning/patient/${id}?limit=${limit}`),
+  // booking consult fee — gates doctor confirmation
+  markBookingPaid: (proposalId: string) =>
+    http(`/api/booking/${proposalId}/mark-paid`, { method: "POST" }),
 
-  simulateBookingPayment: (proposalId: string) =>
-    http(`/api/booking/${proposalId}/simulate-payment`, { method: "POST" }),
-
-  seedDemo: () => http("/api/admin/seed", { method: "POST" }),
-
+  // booking — patient picker + doctor accept/reject
   getProposal: (id: string) =>
     http<{ proposal: any; patient: any; doctor_handoff_summary?: any }>(
       `/api/booking/${id}`,
@@ -109,6 +103,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ action, note }),
     }),
+  completeProposal: (id: string) =>
+    http(`/api/booking/${id}/complete`, { method: "POST" }),
   listProposals: (params: { patient_status?: string; doctor_status?: string } = {}) => {
     const qs = new URLSearchParams(params as any).toString();
     return http<{ proposals: any[] }>(`/api/booking${qs ? `?${qs}` : ""}`);

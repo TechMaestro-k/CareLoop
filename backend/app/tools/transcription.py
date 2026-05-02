@@ -1,3 +1,11 @@
+"""Transcribe inbound voice notes using Groq Whisper.
+
+Used by the Twilio inbound webhook when the patient sends a WhatsApp voice
+message. Twilio gives us a `MediaUrl0` which requires basic-auth (account
+SID + auth token) to download. Once downloaded, we hand the audio to Groq's
+hosted Whisper-large-v3 model which transcribes Hindi, English, and
+auto-detects mixed-language speech.
+"""
 from __future__ import annotations
 
 import logging
@@ -15,6 +23,7 @@ WHISPER_MODEL = "whisper-large-v3"
 
 
 def download_twilio_media(media_url: str) -> Optional[str]:
+    """Download a Twilio media URL to a local temp file. Returns path or None."""
     if not media_url:
         return None
     try:
@@ -44,6 +53,7 @@ def download_twilio_media(media_url: str) -> Optional[str]:
 
 
 def transcribe_audio(file_path: str, language: Optional[str] = None) -> Optional[str]:
+    """Transcribe a local audio file with Groq Whisper. Returns text or None."""
     if not file_path or not os.path.exists(file_path):
         return None
     if not settings.groq_api_key:
@@ -70,6 +80,7 @@ def transcribe_audio(file_path: str, language: Optional[str] = None) -> Optional
 
 
 def transcribe_twilio_media(media_url: str, language: Optional[str] = None) -> Optional[str]:
+    """One-shot: download from Twilio + transcribe with Whisper."""
     path = download_twilio_media(media_url)
     if not path:
         return None

@@ -47,6 +47,7 @@ export default function PatientBookingPage() {
   }
   useEffect(() => {
     void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   async function pick(slotIso: string) {
@@ -62,14 +63,14 @@ export default function PatientBookingPage() {
     }
   }
 
-  async function simulatePay() {
+  async function markPayReceived() {
     setPaying(true);
     setError("");
     try {
-      await api.simulateBookingPayment(id);
+      await api.markBookingPaid(id);
       await load();
     } catch (e: any) {
-      setError(e?.message || "Payment simulation failed");
+      setError(e?.message || "Payment update failed");
     } finally {
       setPaying(false);
     }
@@ -152,8 +153,14 @@ export default function PatientBookingPage() {
           <CardContent className="space-y-3 text-sm text-ink-DEFAULT">
             <div className="font-medium">{p.chosen_slot.human}</div>
             <div>
-              Pay the <strong>${payment.amount_usd} {payment.currency}</strong> consult fee to
-              hold this slot. The doctor will confirm only after payment is received.
+              Pay the{" "}
+              <strong>
+                {payment.currency === "INR"
+                  ? `₹${payment.amount_usd}`
+                  : `${payment.amount_usd} ${payment.currency}`}
+              </strong>{" "}
+              consult fee to hold this slot. The doctor will confirm only after payment is
+              received.
             </div>
             {payment.link && (
               <a
@@ -162,17 +169,21 @@ export default function PatientBookingPage() {
                 rel="noreferrer"
                 className="inline-flex items-center gap-2 rounded-lg bg-ink-DEFAULT px-4 py-2 text-sm font-medium text-white hover:bg-ink-80"
               >
-                <CreditCard className="h-4 w-4" /> Pay ${payment.amount_usd} now
+                <CreditCard className="h-4 w-4" />{" "}
+                Pay{" "}
+                {payment.currency === "INR"
+                  ? `₹${payment.amount_usd}`
+                  : `${payment.amount_usd} ${payment.currency}`}{" "}
+                now
               </a>
             )}
             {payment.mock && (
               <div className="border-t border-mint/40 pt-3">
                 <p className="mb-2 text-xs text-ink-40">
-                  Test mode — payment gateway is sandboxed. Use the button below to mark
-                  payment received instantly.
+                  Payment gateway is not connected in this environment. Mark payment received after verification.
                 </p>
-                <Button onClick={simulatePay} disabled={paying} size="sm" variant="outline">
-                  {paying ? "Marking paid…" : "Mark payment received (test mode)"}
+                <Button onClick={markPayReceived} disabled={paying} size="sm" variant="outline">
+                  {paying ? "Marking paid..." : "Mark payment received"}
                 </Button>
               </div>
             )}

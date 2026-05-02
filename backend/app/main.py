@@ -1,3 +1,4 @@
+"""CareLoop FastAPI entrypoint."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -11,12 +12,12 @@ from fastapi.staticfiles import StaticFiles
 from app.api import (
     booking,
     doctor,
+    email_preview,
     insights,
     messages,
     patients,
     prompts,
     razorpay_webhook,
-    reasoning,
 )
 from app.config import settings
 from app.scheduler.jobs import (
@@ -27,7 +28,7 @@ from app.scheduler.jobs import (
 from app.tools.voice import AUDIO_DIR
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.ERROR,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 log = logging.getLogger("careloop")
@@ -47,10 +48,11 @@ app.include_router(messages.router, prefix="/api")
 app.include_router(doctor.router, prefix="/api")
 app.include_router(prompts.router, prefix="/api")
 app.include_router(razorpay_webhook.router, prefix="/api")
-app.include_router(reasoning.router, prefix="/api")
 app.include_router(booking.router, prefix="/api")
 app.include_router(insights.router, prefix="/api")
+app.include_router(email_preview.router, prefix="/api")
 
+# Serve generated TTS MP3s so Twilio can fetch them as WhatsApp media.
 app.mount("/audio", StaticFiles(directory=str(AUDIO_DIR)), name="audio")
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -78,8 +80,6 @@ else:
 
 @app.on_event("startup")
 def on_startup():
-    log.info("CareLoop starting (supabase=%s, groq=%s)",
-             settings.has_supabase, bool(settings.groq_api_key))
     start_scheduler()
     reschedule_active_patients()
 
@@ -95,17 +95,7 @@ def healthz():
         "ok": True,
         "supabase": settings.has_supabase,
         "groq": bool(settings.groq_api_key),
-        "twilio_mock": not settings.has_twilio,
-        "email_mock": not settings.has_email,
-        "gmail_mock": not settings.has_email,
-        "razorpay_mock": not settings.has_razorpay,
     }
-
-
-@app.post("/api/admin/seed")
-def admin_seed():
-    from app.seed.synthetic_patients import run_seed
-    return run_seed()
 
 
 @app.get("/")

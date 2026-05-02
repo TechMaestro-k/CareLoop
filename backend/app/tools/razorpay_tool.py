@@ -1,3 +1,7 @@
+"""Razorpay payment links + webhook signature verification.
+
+Mock-first: identical signatures so swap-in is one-line later.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -40,15 +44,16 @@ def create_payment_link(
     currency: str = "INR",
     reference_id: str | None = None,
 ) -> dict:
+    """Create a Razorpay payment link. Returns {ok, link, link_id, mock, reference_id}.
+
+    `amount_rupees` is the major-unit amount (rupees for INR, dollars for USD).
+    Razorpay's API takes the value in the smallest unit (paise / cents).
+    """
     client = _client_singleton()
     ref = reference_id or f"careloop_{uuid.uuid4().hex[:12]}_{int(time.time())}"
     if client is None:
         fake_id = f"plink_mock_{uuid.uuid4().hex[:10]}"
         link = f"https://rzp.io/i/MOCK{fake_id[-8:].upper()}"
-        log.info(
-            "[RAZORPAY MOCK] amount=%.2f %s desc=%s link=%s",
-            amount_rupees, currency, description, link,
-        )
         return {
             "ok": True, "link": link, "link_id": fake_id,
             "reference_id": ref, "mock": True,
@@ -84,6 +89,7 @@ def create_payment_link(
 
 
 def verify_webhook_signature(payload_body: bytes, signature_header: str) -> bool:
+    """HMAC-SHA256 verification per Razorpay webhook docs."""
     secret = settings.razorpay_webhook_secret
     if not secret:
         log.warning("RAZORPAY_WEBHOOK_SECRET not set — accepting webhook in dev (DO NOT do this in prod).")
@@ -93,9 +99,11 @@ def verify_webhook_signature(payload_body: bytes, signature_header: str) -> bool
 
 
 def parse_payment_event(event: dict) -> Optional[dict]:
+    """Pull out the bits we care about from a payment.captured / payment_link.paid event."""
     try:
         ev_type = event.get("event", "")
         payload = event.get("payload", {})
+        # payment_link.paid → payload.payment_link.entity, payload.payment.entity
         plink = payload.get("payment_link", {}).get("entity", {})
         payment = payload.get("payment", {}).get("entity", {})
         return {

@@ -7,7 +7,6 @@ import PatientsPage from "@/pages/PatientsPage";
 import PatientDetailPage from "@/pages/PatientDetailPage";
 import DoctorInboxPage from "@/pages/DoctorInboxPage";
 import EscalationDetailPage from "@/pages/EscalationDetailPage";
-import ChatPage from "@/pages/ChatPage";
 import InsightsPage from "@/pages/InsightsPage";
 import PromptsPage from "@/pages/PromptsPage";
 import PatientBookingPage from "@/pages/PatientBookingPage";
@@ -26,7 +25,6 @@ export const router = createBrowserRouter([
       { path: "doctor", element: <Navigate to="/doctor/inbox" replace /> },
       { path: "doctor/inbox", element: <DoctorInboxPage /> },
       { path: "doctor/escalations/:escId", element: <EscalationDetailPage /> },
-      { path: "chat", element: <ChatPage /> },
       { path: "insights", element: <InsightsPage /> },
       { path: "prompts", element: <PromptsPage /> },
     ],

@@ -1,3 +1,27 @@
+"""Agent 3: Engagement & Escalation.
+
+Inbound flow:
+  patient sends WhatsApp text or voice → /messages/inbound
+  → engagement_node:
+       1. NLU classify (severity / confidence / needs_clarification)
+       2. If needs_clarification or low confidence → ask back, exit
+       3. If RED → create slot proposal (no payment yet),
+                   send patient picker URL,
+                   send doctor a redacted heads-up (severity + raw symptoms only,
+                   NO disease name, NO suggested clinical action),
+                   send caregiver an urgent heads-up.
+       4. If AMBER → give 1-2 concrete safe steps via LLM, alert caregiver.
+       5. If GREEN → light reinforcement via LLM (only if patient actually
+                     reported wellness; otherwise the LLM continues the
+                     conversation naturally).
+       6. Always: every send_whatsapp / send_email also gets appended to
+                  state["outgoing_messages"] / state["outgoing_emails"] so the
+                  internal handoff and testability.
+
+Outbound voice: when the patient's channel_pref is "whatsapp_voice", the
+reply text is also synthesized via gTTS and attached as media so the patient
+hears the message — same as the cron daily check-in path.
+"""
 from __future__ import annotations
 
 import logging
@@ -12,11 +36,12 @@ from app.tools.calendar_tool import propose_slots
 from app.tools.email_tool import send_email
 from app.tools.llm import chat_json, chat_text
 from app.tools.voice import public_audio_url, synthesize_sync
-from app.tools.whatsapp import send_whatsapp
+from app.tools.whatsapp import format_whatsapp_message, send_whatsapp
 
 log = logging.getLogger(__name__)
 
 
+# ---------------- DB helpers ----------------
 
 def _persist_reasoning(patient_id, observed, inferred, decided, tools):
     safe_insert(
@@ -52,10 +77,20 @@ def _recent_interactions(patient_id, limit=8):
 
 
 def _format_conversation_history(patient_id: str, *, limit: int = 8) -> str:
+    """Build a short transcript of the last few WhatsApp turns for this
+    patient and format it as `langchain_core` messages, then render it
+    as a flat string the prompt template can consume.
+
+    This is the chat-memory layer: every LLM call (NLU classifier + reply
+    writer) sees the recent dialogue so a "no" answer to "any breathing
+    trouble?" is interpreted as a denial, not as a new symptom.
+    """
     rows = _recent_interactions(patient_id, limit=limit) or []
     if not rows:
         return "(no prior conversation)"
 
+    # rows come back newest-first because of `order=(timestamp, True)`;
+    # we want oldest-first for the LLM to read the conversation top-down.
     rows = list(reversed(rows))
 
     try:
@@ -76,6 +111,7 @@ def _format_conversation_history(patient_id: str, *, limit: int = 8) -> str:
         ) or "(no prior conversation)"
     except Exception as e:
         log.warning("history formatting fallback: %s", e)
+        # Fallback formatting if langchain_core import fails for any reason
         lines = []
         for r in rows:
             content = (r.get("content") or "").strip()
@@ -86,11 +122,15 @@ def _format_conversation_history(patient_id: str, *, limit: int = 8) -> str:
         return "\n".join(lines) or "(no prior conversation)"
 
 
+# ---------------- Outgoing collectors ----------------
+# Every WhatsApp / email send also goes into state for internal handoff.
+
+
 
 def _send_wa(state: PatientState, *, to: str, body: str, kind: str, media_url: Optional[str] = None) -> dict:
     res = send_whatsapp(to, body, media_url=media_url)
     entry: dict = {
-        "to": kind,
+        "to": kind,                # "patient" | "doctor" | "caregiver"
         "phone": to,
         "text": body,
         "media_url": media_url,
@@ -118,8 +158,13 @@ def _send_em(state: PatientState, *, to: str, subject: str, text: str, html: Opt
     return res
 
 
+# ---------------- Reply generation (LLM) ----------------
 
 def _count_outbound_questions(patient_id: str, *, limit: int = 8) -> int:
+    """Count how many follow-up questions CareLoop has already asked the
+    patient in the recent conversation. Used to stop the LLM from asking
+    a question on every single turn — past 1–2 questions, we wrap up.
+    """
     rows = _recent_interactions(patient_id, limit=limit) or []
     n = 0
     for r in rows:
@@ -140,6 +185,8 @@ def _llm_reply(
     conversation_history: str = "(no prior conversation)",
     prior_questions_asked: int = 0,
 ) -> str:
+    """Ask the LLM for a contextual WhatsApp reply. Falls back to a safe
+    minimal English line if the LLM is unavailable."""
     text = chat_text(
         "engagement_reply",
         patient_name=patient_name or "there",
@@ -156,6 +203,7 @@ def _llm_reply(
     text = (text or "").strip().strip('"').strip()
     if text:
         return text
+    # Safe English fallback per severity
     if severity == "red":
         return (
             "Thanks for letting me know — I've shared this with your doctor and "
@@ -170,14 +218,17 @@ def _llm_reply(
     if severity == "clarify":
         q = classification.get("clarifying_question") or "Can you tell me a little more about how you're feeling?"
         return q
+    # green / unknown
     return (
         f"Hi {patient_name or 'there'} — checking in. How are you feeling today? "
         "Any breathing trouble, swelling, weight change, or missed doses?"
     )
 
 
+# ---------------- Standardized WhatsApp formatting ----------------
 
 def _patient_msg(body: str) -> str:
+    """One consistent envelope for everything we send the patient."""
     return f"🩺 CareLoop\n{body.strip()}"
 
 
@@ -189,6 +240,16 @@ def _patient_red_picker(body_intro: str, picker_url: str, slots: list[dict]) -> 
 
 
 def _doctor_msg(*, name: str, severity: str, raw_message: str, symptoms_list: list[str], picker_url: str) -> str:
+    """REDACTED doctor heads-up.
+
+    Per the user's instruction: do NOT name a disease, do NOT push a
+    clinical action label. Show the doctor only:
+      - severity bucket
+      - patient identifier
+      - exactly what the patient said
+      - the symptoms NLU detected (their own descriptive words)
+      - the slot picker URL so the doctor knows where to confirm later
+    """
     sym = ", ".join(symptoms_list or []) or "(none specifically labelled)"
     sev_tag = {"red": "🚨 RED", "amber": "🟠 AMBER", "green": "🟢 GREEN"}.get(severity, severity.upper())
     body = (
@@ -220,6 +281,65 @@ def _amber_caregiver_msg(name: str, raw_message: str, symptoms: list[str]) -> st
     )
 
 
+# Final WhatsApp templates. These override the older free-form helpers above
+# so patient, doctor, and caregiver messages share one fixed CareLoop envelope.
+def _patient_msg(body: str) -> str:
+    return format_whatsapp_message(title="", body=body)
+
+
+def _patient_red_picker(body_intro: str, picker_url: str, slots: list[dict]) -> str:
+    sample = " · ".join(s["human"] for s in (slots or [])[:3])
+    suffix = f"\n\nAvailable: {sample}" if sample else ""
+    return format_whatsapp_message(
+        title="Doctor visit needed",
+        body=f"{body_intro}\n\nPick a time that works.{suffix}",
+        cta_label="Choose slot",
+        cta_url=picker_url or None,
+    )
+
+
+def _doctor_msg(*, name: str, severity: str, raw_message: str, symptoms_list: list[str], picker_url: str) -> str:
+    sym = ", ".join(symptoms_list or []) or "(none specifically labelled)"
+    sev_tag = {"red": "RED", "amber": "AMBER", "green": "GREEN"}.get(severity, severity.upper())
+    return format_whatsapp_message(
+        title=f"{sev_tag} patient escalation",
+        body=(
+            f"Patient: {name}\n"
+            f"Severity (auto-triage only): {sev_tag}\n\n"
+            f"Patient message: \"{raw_message}\"\n"
+            f"Symptoms reported: {sym}\n\n"
+            "Patient is choosing a video slot. Please review once payment is complete."
+        ),
+        cta_label="Open booking",
+        cta_url=picker_url or None,
+    )
+
+
+def _caregiver_red_msg(name: str, raw_message: str, picker_url: str) -> str:
+    return format_whatsapp_message(
+        title="Urgent care alert",
+        body=(
+            f"{name} just messaged us with something we want you to know about.\n"
+            f"What they said: \"{raw_message}\"\n\n"
+            f"A doctor has been notified and {name} is choosing a video slot now.\n"
+            f"Please call {name} and stay close to your phone."
+        ),
+    )
+
+
+def _amber_caregiver_msg(name: str, raw_message: str, symptoms: list[str]) -> str:
+    sym = ", ".join(symptoms or []) or "(unspecified)"
+    return format_whatsapp_message(
+        title=f"AMBER alert for {name}",
+        body=(
+            f"What they said: \"{raw_message}\"\n"
+            f"Symptoms: {sym}\n\n"
+            f"We're checking in twice today. Please give {name} a call when you can."
+        ),
+    )
+
+
+# ---------------- Email rendering (English only, no diagnosis names) ----------------
 
 _BTN_PRIMARY = (
     "background:#dc2626;color:#ffffff;padding:12px 22px;border-radius:8px;"
@@ -265,13 +385,16 @@ def _shell_html(*, title: str, severity: str, body_html: str) -> str:
 
 
 def _doctor_email(*, name: str, severity: str, raw_message: str, symptoms: list[str], picker_url: str) -> dict:
+    """Doctor email — REDACTED. Severity + the patient's own words only.
+    No disease label, no AI-suggested clinical action.
+    """
     sym = ", ".join(symptoms or []) or "(none specifically labelled)"
     text = (
         f"CareLoop heads-up — severity {severity.upper()}.\n\n"
         f"Patient: {name}\n"
         f"Patient message: \"{raw_message}\"\n"
         f"Symptoms (auto-extracted from their words): {sym}\n\n"
-        f"Patient is choosing a video slot. Confirm here:\n{picker_url}\n"
+        "Patient is choosing a video slot. Use the Open booking button in this email.\n"
     )
     body_html = (
         f'<p style="margin:0 0 14px;">Severity: {_badge_html(severity)}</p>'
@@ -328,22 +451,26 @@ def _amber_caregiver_email(*, name: str, raw_message: str, symptoms: list[str]) 
     return {"text": text, "html": html}
 
 
+# ---------------- Voice helper ----------------
 
 def _maybe_voice(text: str, *, plan: dict, patient: dict) -> Optional[str]:
+    """Return a public audio URL if the patient prefers voice WhatsApp, else None."""
     channel = (plan.get("channel") or patient.get("channel_pref") or "").strip()
     if channel != "whatsapp_voice":
         return None
+    # Honor the care plan's language code so the voice note actually
+    # matches the patient's preferred language (Hindi, Tamil, Bengali…).
     audio = synthesize_sync(text, language=plan.get("language") or "en")
     if not audio:
         return None
     url = public_audio_url(audio) or None
-    if url:
-        log.info("[voice] reply audio url=%s", url)
     return url
 
 
+# ---------------- Outbound English check-in (cron) ----------------
 
 def _get_slot_label() -> str:
+    """Return 'morning', 'afternoon', or 'evening' based on current IST time."""
     from datetime import datetime, timezone, timedelta
     IST = timezone(timedelta(hours=5, minutes=30))
     now_ist = datetime.now(IST)
@@ -356,6 +483,14 @@ def _get_slot_label() -> str:
 
 
 def _build_checkin_prompt(plan: dict, name: str, *, conversation_history: str = "(no prior conversation)", slot_label: str = "morning") -> str:
+    """LLM-driven, memory-aware scheduled check-in.
+
+    Pulls the last day or two of WhatsApp turns out of the patient's
+    interactions table and asks the LLM to write a short, varied check-in
+    ping that references whatever the patient told us yesterday — instead
+    of asking the same generic three-symptom question every single day.
+    Falls back to the safe generic line if the LLM is unavailable.
+    """
     try:
         text = chat_text(
             "daily_checkin",
@@ -376,8 +511,15 @@ def _build_checkin_prompt(plan: dict, name: str, *, conversation_history: str = 
     )
 
 
+# ---------------- Main node ----------------
 
 def engagement_node(state: PatientState) -> PatientState:
+    """Handle a check-in cycle.
+
+    Two trigger modes:
+    - state['triggered_by'] == 'cron'    → outbound daily check-in
+    - state['triggered_by'] in ('inbound', 'inbound_voice') → triage + reply
+    """
     patient_id = state["patient_id"]
     triggered_by = state.get("triggered_by", "inbound")
     patient = state.get("patient_record") or _patient_record(patient_id)
@@ -387,8 +529,12 @@ def engagement_node(state: PatientState) -> PatientState:
     state.setdefault("outgoing_emails", [])
     tools_called: list[str] = []
 
+    # --- CRON: scheduled check-in ---
     if triggered_by == "cron":
+        # Compute slot label (morning/afternoon/evening) so the LLM can vary tone
         slot_label = _get_slot_label()
+        # Pull recent WhatsApp transcript so the check-in ping can
+        # reference what the patient actually told us — not a stock line.
         cron_history = _format_conversation_history(patient_id)
         msg = _patient_msg(
             _build_checkin_prompt(
@@ -421,6 +567,7 @@ def engagement_node(state: PatientState) -> PatientState:
         )
         return state
 
+    # --- INBOUND: triage ---
     message = state.get("current_message", "")
     if not message:
         log.warning("engagement_node inbound with empty message")
@@ -438,6 +585,9 @@ def engagement_node(state: PatientState) -> PatientState:
         },
     )
 
+    # Build chat memory ONCE per inbound — this is what stops the model
+    # from re-asking the same question and from misclassifying short
+    # context-dependent answers like "no" / "fine".
     convo_history = _format_conversation_history(patient_id)
     prior_qs = _count_outbound_questions(patient_id)
 
@@ -457,6 +607,7 @@ def engagement_node(state: PatientState) -> PatientState:
     confidence = float(classification.get("confidence") or 0.0)
     needs_clarification = bool(classification.get("needs_clarification"))
 
+    # --- CLARIFY: low confidence or NLU explicitly unsure → ask back, exit ---
     if severity != "red" and (needs_clarification or confidence < 0.5):
         severity = "clarify"
         ask = _llm_reply(
@@ -504,6 +655,7 @@ def engagement_node(state: PatientState) -> PatientState:
         })
         return state
 
+    # KG red-flag cross-reference (still a useful belt-and-braces nudge AMBER)
     red_flag_hits = []
     flags = plan.get("red_flag_symptoms", []) or kg_tools.diagnosis_red_flags(clinical.get("diagnosis", ""))
     msg_lower = message.lower()
@@ -513,6 +665,7 @@ def engagement_node(state: PatientState) -> PatientState:
     if red_flag_hits and severity == "green":
         severity = "amber"
 
+    # Build the LLM reply once — used for every severity
     reply_text = _llm_reply(
         patient_name=patient.get("name", "there"),
         message=message,
@@ -530,6 +683,7 @@ def engagement_node(state: PatientState) -> PatientState:
     name = patient.get("name", "Patient")
     symptoms = classification.get("symptoms", []) or []
 
+    # --- GREEN ---
     if severity == "green":
         body = _patient_msg(reply_text)
         media_url = _maybe_voice(body, plan=plan, patient=patient)
@@ -538,6 +692,7 @@ def engagement_node(state: PatientState) -> PatientState:
             tools_called.append("whatsapp:green_reply")
         decision_text = "GREEN — reinforcement / continued conversation. No escalation."
 
+    # --- AMBER ---
     elif severity == "amber":
         body = _patient_msg(reply_text)
         media_url = _maybe_voice(body, plan=plan, patient=patient)
@@ -559,6 +714,9 @@ def engagement_node(state: PatientState) -> PatientState:
             cg_wa = _amber_caregiver_msg(name=name, raw_message=message, symptoms=symptoms)
             _send_wa(state, to=caregiver_phone, body=cg_wa, kind="caregiver")
             tools_called.append("whatsapp:caregiver_amber")
+        # Persist a non-urgent escalation row so the doctor queue and the
+        # Insights dashboard reflect the event. Status defaults to 'pending';
+        # the doctor can dismiss it without taking a slot action.
         amber_brief = (
             f"Patient: {name}\n"
             f"Severity: AMBER\n"
@@ -578,16 +736,19 @@ def engagement_node(state: PatientState) -> PatientState:
         tools_called.append("db:insert(escalations:amber)")
         decision_text = "AMBER — concrete safe steps sent to patient, caregiver alerted."
 
+    # --- RED ---
     else:
+        # Propose 3 candidate slots; patient picks via the booking link.
         slots = propose_slots(urgency="now", count=3)
         proposal = create_proposal_from_agent(
             patient_id=patient_id,
-            escalation_id=None,
+            escalation_id=None,  # set below after escalation row created
             urgency="now",
             proposed_slots=slots,
         )
         picker_url = (proposal or {}).get("picker_url", "")
 
+        # Escalation row — REDACTED brief (no AI diagnosis text).
         esc_brief = (
             f"Patient: {name}\n"
             f"Severity: RED\n"
@@ -607,12 +768,14 @@ def engagement_node(state: PatientState) -> PatientState:
         tools_called.append("calendar:propose_slots")
         tools_called.append("db:insert(slot_proposals,escalations)")
 
+        # Patient acknowledgement with picker link
         body = _patient_red_picker(reply_text, picker_url, slots)
         media_url = _maybe_voice(body, plan=plan, patient=patient)
         if patient.get("phone"):
             _send_wa(state, to=patient["phone"], body=body, kind="patient", media_url=media_url)
             tools_called.append("whatsapp:patient_red_ack")
 
+        # Doctor heads-up — REDACTED, no diagnosis, no suggested action
         if doctor_email:
             mail = _doctor_email(
                 name=name,
@@ -641,6 +804,7 @@ def engagement_node(state: PatientState) -> PatientState:
             _send_wa(state, to=settings.doctor_phone, body=doc_wa, kind="doctor")
             tools_called.append("whatsapp:doctor_alert")
 
+        # Caregiver heads-up
         if caregiver_email:
             mail = _caregiver_red_email(name=name, raw_message=message, picker_url=picker_url)
             _send_em(
@@ -662,6 +826,7 @@ def engagement_node(state: PatientState) -> PatientState:
             f"Doctor + caregiver notified. Booking confirms only after patient pays."
         )
 
+    # Persist classified inbound row
     safe_insert(
         "interactions",
         {
@@ -701,6 +866,7 @@ def engagement_node(state: PatientState) -> PatientState:
     return state
 
 
+# ---------------- SDOH one-liner (kept for reasoning, not used in doctor mail) ----------------
 
 def _sdoh_one_liner(patient_id) -> str:
     rows = safe_select("sdoh_profiles", match={"patient_id": patient_id}, limit=1)

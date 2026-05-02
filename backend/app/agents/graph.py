@@ -1,6 +1,10 @@
-from __future__ import annotations
+"""LangGraph orchestrator: stitches the agent nodes together.
 
-import logging
+Two flows:
+- onboarding_flow(state): context_builder → care_plan
+- engagement_flow(state):  engagement
+"""
+from __future__ import annotations
 
 from langgraph.graph import END, StateGraph
 
@@ -8,9 +12,6 @@ from app.agents.care_plan import care_plan_node
 from app.agents.context_builder import context_builder_node
 from app.agents.engagement import engagement_node
 from app.agents.state import PatientState
-
-log = logging.getLogger(__name__)
-
 
 def _build_onboarding_graph():
     g = StateGraph(PatientState)
@@ -35,10 +36,8 @@ _engagement = _build_engagement_graph()
 
 
 def run_onboarding(state: PatientState) -> PatientState:
-    log.info("Running onboarding flow for patient %s", state.get("patient_id"))
     return _onboarding.invoke(state)
 
 
 def run_engagement(state: PatientState) -> PatientState:
-    log.info("Running engagement flow for patient %s", state.get("patient_id"))
     return _engagement.invoke(state)
