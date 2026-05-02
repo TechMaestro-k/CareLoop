@@ -1,7 +1,11 @@
+#Demo Video (Full project explanation)
+
+https://drive.google.com/file/d/1KOTCg2jz1wprXvOvlqeJ3QcsQR7aJisb/view?usp=sharing
+
+
 # CareLoop
 
 > **An SDOH-aware agentic AI for post-discharge readmission prevention.**
-> Built for the Veersa Hackathon — April 2026.
 
 CareLoop monitors patients for **30 days after hospital discharge** — on their phone, through WhatsApp — and routes the right action to the right person at the right time.
 
